@@ -1,58 +1,65 @@
-"""Turn orchestration; business rules and API transport remain separate."""
+"""One model decision per host turn; the host alone executes requested tools."""
 
-from support_agent.domain.customer import customer_reply, find_customer_id, find_email
-from support_agent.config import DOMAIN
-from support_agent.state import initial_state
-from tau2.data_model.message import AssistantMessage, MultiToolMessage, ToolCall
+from support_agent.gateway import GatewayAdapter
+from support_agent.prompts import SYSTEM_PROMPT
+from support_agent.state import (
+    ProtocolError, SessionState, initial_state, receive, record_reply, restore_history,
+)
+from tau2.data_model.message import AssistantMessage, SystemMessage
 
 
-class CustomerAgent:
-    """Deterministic t1 lookup example, not a complete p1/t2 business solution."""
+class RetailAgent:
+    """P1 read-only protocol skeleton; user semantics are delegated to LLM."""
+
+    def __init__(self, context):
+        if context.runtime_config.get("domain") != "retail_plus":
+            raise ValueError("This Agent requires the bound retail_plus domain")
+        self.context = context
+        self.resources = context.resources
+        self.runtime_config = context.runtime_config
+        self.gateway = GatewayAdapter(context)
 
     def get_init_state(self, message_history=None):
-        """Start an independent session. This example does not replay history."""
-        return initial_state()
+        state = initial_state()
+        restore_history(state, message_history or [], self.gateway.actions_by_name)
+        return state.model_dump(mode="json")
 
     def generate_next_message(self, message, state):
-        """Consume a user/tool message and return a reply plus serializable state."""
-        next_state = {**state, "turn": state["turn"] + 1}
-        if isinstance(message, MultiToolMessage):
-            pending = state["pending_call_id"]
-            result = (
-                next(
-                    (item for item in message.tool_messages if item.id == pending),
-                    None,
-                )
-                if pending
-                else None
+        current = SessionState.model_validate(state).model_copy(deep=True)
+        current.turn += 1
+        if current.halt_reason:
+            return self._stop(current, current.halt_reason)
+        try:
+            receive(current, message)
+        except ProtocolError:
+            return self._stop(current, "invalid_host_sequence")
+        if current.model_calls >= self.gateway.limits.max_model_calls:
+            return self._stop(current, "model_call_limit")
+        current.model_calls += 1  # Count attempts, including provider failures.
+        try:
+            reply = self.gateway.generate(
+                [SystemMessage(role="system", content=SYSTEM_PROMPT, timestamp=None),
+                 *self.gateway.project_history(current.history)]
             )
-            next_state["pending_call_id"] = None
-            text = (
-                customer_reply(result.content, result.error)
-                if result
-                else "No matching customer lookup result was received. Please try again."
-            )
-            return AssistantMessage(role="assistant", content=text), next_state
-        customer_id = find_customer_id(message.content or "") or state["customer_id"]
-        email = find_email(message.content or "")
-        next_state["customer_id"] = customer_id
-        if DOMAIN == "retail_plus" and not email:
-            return AssistantMessage(role="assistant", content="Please provide your email to verify your identity before I access your profile. A customer ID alone is not verification."), next_state
-        if not customer_id and DOMAIN != "retail_plus":
-            return AssistantMessage(
-                role="assistant",
-                content="This example supports customer lookup. Please provide your customer ID.",
-            ), next_state
-        call_id = f"lookup-{next_state['turn']}"
-        next_state.update(customer_id=customer_id, pending_call_id=call_id)
-        return AssistantMessage(
-            role="assistant",
-            tool_calls=[
-                ToolCall(
-                    id=call_id,
-                    name="lookup_customer",
-                    arguments={"customer_id": customer_id or "", "email": email or ""},
-                    requestor="assistant",
-                )
-            ],
-        ), next_state
+        except Exception:
+            # Provider exception text may contain secrets; do not copy it.
+            return self._stop(current, "gateway_failure")
+        try:
+            if (isinstance(reply, AssistantMessage) and reply.tool_calls and
+                    current.request_tool_rounds >= self.gateway.limits.max_tool_rounds):
+                return self._stop(current, "tool_round_limit")
+            record_reply(current, reply, self.gateway.actions_by_name)
+        except ProtocolError:
+            return self._stop(current, "invalid_model_reply")
+        return reply, current.model_dump(mode="json")
+
+    @staticmethod
+    def _stop(state, reason):
+        state.halt_reason = reason
+        reply = AssistantMessage(
+            role="assistant", timestamp=None,
+            content="I cannot continue this request because of a service or protocol limit. "
+                    "I have not confirmed that the requested task is complete.",
+        )
+        # Preserve pending calls and evidence; do not fabricate tool results.
+        return reply, state.model_dump(mode="json")

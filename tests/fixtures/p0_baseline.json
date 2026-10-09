@@ -1,0 +1,1758 @@
+{
+  "fixture_version": 1,
+  "stage": "P0",
+  "provenance": "All customers, IDs, catalog options, prices, addresses, emails, dialogue wording and receipts are synthetic offline development data. No public evaluation answers or credentials are copied.",
+  "contract_source": "materials/client_api/openapi.yaml",
+  "contract_sha256": "f2268b325c442206b1234c4a16dbd5a7f4ff81a925be56d9fb0be59cf8a56594",
+  "interpretation": "Wire examples are independent schema snapshots, not one ordered transaction or an implemented backend. Identity dialogue blueprints require later LLM tests; no parser is supplied.",
+  "records": {
+    "customers": [
+      {
+        "customer_id": "p0_customer_a",
+        "name": {
+          "first_name": "Alex",
+          "last_name": "Li"
+        },
+        "default_shipping_address": {
+          "address_line_1": "10 Synthetic Avenue",
+          "address_line_2": null,
+          "city": "New York",
+          "region": "NY",
+          "country": "USA",
+          "postal_code": "10001"
+        },
+        "email": "alex.p0@example.test",
+        "payment_methods": [
+          {
+            "source": "credit_card",
+            "id": "p0_card",
+            "brand": "visa",
+            "last_four": "1234"
+          },
+          {
+            "source": "paypal",
+            "id": "p0_paypal"
+          },
+          {
+            "source": "gift_card",
+            "id": "p0_gift",
+            "balance": 80.0
+          },
+          {
+            "source": "gift_card",
+            "id": "p0_gift_low",
+            "balance": 5.0
+          }
+        ],
+        "order_ids": [
+          "#P0-PENDING",
+          "#P0-MODIFIED",
+          "#P0-PROCESSED",
+          "#P0-DELIVERED",
+          "#P0-CANCELLED",
+          "#P0-EXCHANGE",
+          "#P0-RETURN",
+          "#P0-AMBIGUOUS",
+          "#P0-NEGATIVE"
+        ]
+      },
+      {
+        "customer_id": "p0_customer_b",
+        "name": {
+          "first_name": "Casey",
+          "last_name": "Roe"
+        },
+        "default_shipping_address": {
+          "address_line_1": "30 Synthetic Road",
+          "address_line_2": null,
+          "city": "Atlanta",
+          "region": "GA",
+          "country": "USA",
+          "postal_code": "30301"
+        },
+        "email": "casey.p0@example.test",
+        "payment_methods": [
+          {
+            "source": "credit_card",
+            "id": "p0_other_card",
+            "brand": "visa",
+            "last_four": "5678"
+          }
+        ],
+        "order_ids": [
+          "#P0-FOREIGN"
+        ]
+      }
+    ],
+    "products": [
+      {
+        "product_id": "p0_shirt",
+        "name": "Fixture Shirt",
+        "items": [
+          {
+            "item_id": "p0_shirt_s_blue",
+            "options": {
+              "size": "S",
+              "color": "blue"
+            },
+            "available": true,
+            "price": 20.0
+          },
+          {
+            "item_id": "p0_shirt_m_blue",
+            "options": {
+              "size": "M",
+              "color": "blue"
+            },
+            "available": true,
+            "price": 25.0
+          },
+          {
+            "item_id": "p0_shirt_m_black",
+            "options": {
+              "size": "M",
+              "color": "black"
+            },
+            "available": false,
+            "price": 23.0
+          }
+        ]
+      },
+      {
+        "product_id": "p0_mug",
+        "name": "Fixture Mug",
+        "items": [
+          {
+            "item_id": "p0_mug_small",
+            "options": {
+              "capacity": "300 ml",
+              "color": "white"
+            },
+            "available": true,
+            "price": 10.0
+          },
+          {
+            "item_id": "p0_mug_large",
+            "options": {
+              "capacity": "450 ml",
+              "color": "white"
+            },
+            "available": true,
+            "price": 12.0
+          }
+        ]
+      }
+    ],
+    "orders": [
+      {
+        "order_id": "#P0-PENDING",
+        "customer_id": "p0_customer_a",
+        "shipping_address": {
+          "address_line_1": "10 Synthetic Avenue",
+          "address_line_2": null,
+          "city": "New York",
+          "region": "NY",
+          "country": "USA",
+          "postal_code": "10001"
+        },
+        "items": [
+          {
+            "name": "Fixture Shirt",
+            "product_id": "p0_shirt",
+            "item_id": "p0_shirt_s_blue",
+            "price": 20.0,
+            "options": {
+              "size": "S",
+              "color": "blue"
+            }
+          },
+          {
+            "name": "Fixture Shirt",
+            "product_id": "p0_shirt",
+            "item_id": "p0_shirt_s_blue",
+            "price": 20.0,
+            "options": {
+              "size": "S",
+              "color": "blue"
+            }
+          },
+          {
+            "name": "Fixture Mug",
+            "product_id": "p0_mug",
+            "item_id": "p0_mug_small",
+            "price": 10.0,
+            "options": {
+              "capacity": "300 ml",
+              "color": "white"
+            }
+          }
+        ],
+        "status": "pending",
+        "fulfillments": [],
+        "payments": [
+          {
+            "transaction_type": "payment",
+            "amount": 50.0,
+            "payment_method_id": "p0_card"
+          }
+        ],
+        "cancellation": null,
+        "exchange": null,
+        "return_request": null
+      },
+      {
+        "order_id": "#P0-MODIFIED",
+        "customer_id": "p0_customer_a",
+        "shipping_address": {
+          "address_line_1": "10 Synthetic Avenue",
+          "address_line_2": null,
+          "city": "New York",
+          "region": "NY",
+          "country": "USA",
+          "postal_code": "10001"
+        },
+        "items": [
+          {
+            "name": "Fixture Shirt",
+            "product_id": "p0_shirt",
+            "item_id": "p0_shirt_m_blue",
+            "price": 25.0,
+            "options": {
+              "size": "M",
+              "color": "blue"
+            }
+          },
+          {
+            "name": "Fixture Shirt",
+            "product_id": "p0_shirt",
+            "item_id": "p0_shirt_m_blue",
+            "price": 25.0,
+            "options": {
+              "size": "M",
+              "color": "blue"
+            }
+          },
+          {
+            "name": "Fixture Mug",
+            "product_id": "p0_mug",
+            "item_id": "p0_mug_small",
+            "price": 10.0,
+            "options": {
+              "capacity": "300 ml",
+              "color": "white"
+            }
+          }
+        ],
+        "status": "pending (items modified)",
+        "fulfillments": [],
+        "payments": [
+          {
+            "transaction_type": "payment",
+            "amount": 50.0,
+            "payment_method_id": "p0_card"
+          },
+          {
+            "transaction_type": "payment",
+            "amount": 10.0,
+            "payment_method_id": "p0_gift"
+          }
+        ],
+        "cancellation": null,
+        "exchange": null,
+        "return_request": null
+      },
+      {
+        "order_id": "#P0-PROCESSED",
+        "customer_id": "p0_customer_a",
+        "shipping_address": {
+          "address_line_1": "10 Synthetic Avenue",
+          "address_line_2": null,
+          "city": "New York",
+          "region": "NY",
+          "country": "USA",
+          "postal_code": "10001"
+        },
+        "items": [
+          {
+            "name": "Fixture Shirt",
+            "product_id": "p0_shirt",
+            "item_id": "p0_shirt_s_blue",
+            "price": 20.0,
+            "options": {
+              "size": "S",
+              "color": "blue"
+            }
+          },
+          {
+            "name": "Fixture Shirt",
+            "product_id": "p0_shirt",
+            "item_id": "p0_shirt_s_blue",
+            "price": 20.0,
+            "options": {
+              "size": "S",
+              "color": "blue"
+            }
+          },
+          {
+            "name": "Fixture Mug",
+            "product_id": "p0_mug",
+            "item_id": "p0_mug_small",
+            "price": 10.0,
+            "options": {
+              "capacity": "300 ml",
+              "color": "white"
+            }
+          }
+        ],
+        "status": "processed",
+        "fulfillments": [
+          {
+            "tracking_id": [
+              "P0_TRACK_1"
+            ],
+            "item_ids": [
+              "p0_shirt_s_blue",
+              "p0_shirt_s_blue",
+              "p0_mug_small"
+            ]
+          }
+        ],
+        "payments": [
+          {
+            "transaction_type": "payment",
+            "amount": 50.0,
+            "payment_method_id": "p0_card"
+          }
+        ],
+        "cancellation": null,
+        "exchange": null,
+        "return_request": null
+      },
+      {
+        "order_id": "#P0-DELIVERED",
+        "customer_id": "p0_customer_a",
+        "shipping_address": {
+          "address_line_1": "10 Synthetic Avenue",
+          "address_line_2": null,
+          "city": "New York",
+          "region": "NY",
+          "country": "USA",
+          "postal_code": "10001"
+        },
+        "items": [
+          {
+            "name": "Fixture Shirt",
+            "product_id": "p0_shirt",
+            "item_id": "p0_shirt_s_blue",
+            "price": 20.0,
+            "options": {
+              "size": "S",
+              "color": "blue"
+            }
+          },
+          {
+            "name": "Fixture Shirt",
+            "product_id": "p0_shirt",
+            "item_id": "p0_shirt_s_blue",
+            "price": 20.0,
+            "options": {
+              "size": "S",
+              "color": "blue"
+            }
+          },
+          {
+            "name": "Fixture Mug",
+            "product_id": "p0_mug",
+            "item_id": "p0_mug_small",
+            "price": 10.0,
+            "options": {
+              "capacity": "300 ml",
+              "color": "white"
+            }
+          }
+        ],
+        "status": "delivered",
+        "fulfillments": [
+          {
+            "tracking_id": [
+              "P0_TRACK_1"
+            ],
+            "item_ids": [
+              "p0_shirt_s_blue",
+              "p0_shirt_s_blue",
+              "p0_mug_small"
+            ]
+          }
+        ],
+        "payments": [
+          {
+            "transaction_type": "payment",
+            "amount": 50.0,
+            "payment_method_id": "p0_card"
+          }
+        ],
+        "cancellation": null,
+        "exchange": null,
+        "return_request": null
+      },
+      {
+        "order_id": "#P0-CANCELLED",
+        "customer_id": "p0_customer_a",
+        "shipping_address": {
+          "address_line_1": "10 Synthetic Avenue",
+          "address_line_2": null,
+          "city": "New York",
+          "region": "NY",
+          "country": "USA",
+          "postal_code": "10001"
+        },
+        "items": [
+          {
+            "name": "Fixture Shirt",
+            "product_id": "p0_shirt",
+            "item_id": "p0_shirt_s_blue",
+            "price": 20.0,
+            "options": {
+              "size": "S",
+              "color": "blue"
+            }
+          },
+          {
+            "name": "Fixture Shirt",
+            "product_id": "p0_shirt",
+            "item_id": "p0_shirt_s_blue",
+            "price": 20.0,
+            "options": {
+              "size": "S",
+              "color": "blue"
+            }
+          },
+          {
+            "name": "Fixture Mug",
+            "product_id": "p0_mug",
+            "item_id": "p0_mug_small",
+            "price": 10.0,
+            "options": {
+              "capacity": "300 ml",
+              "color": "white"
+            }
+          }
+        ],
+        "status": "cancelled",
+        "fulfillments": [],
+        "payments": [
+          {
+            "transaction_type": "payment",
+            "amount": 50.0,
+            "payment_method_id": "p0_card"
+          },
+          {
+            "transaction_type": "refund",
+            "amount": 50.0,
+            "payment_method_id": "p0_card"
+          }
+        ],
+        "cancellation": {
+          "reason": "no longer needed"
+        },
+        "exchange": null,
+        "return_request": null
+      },
+      {
+        "order_id": "#P0-EXCHANGE",
+        "customer_id": "p0_customer_a",
+        "shipping_address": {
+          "address_line_1": "10 Synthetic Avenue",
+          "address_line_2": null,
+          "city": "New York",
+          "region": "NY",
+          "country": "USA",
+          "postal_code": "10001"
+        },
+        "items": [
+          {
+            "name": "Fixture Shirt",
+            "product_id": "p0_shirt",
+            "item_id": "p0_shirt_s_blue",
+            "price": 20.0,
+            "options": {
+              "size": "S",
+              "color": "blue"
+            }
+          },
+          {
+            "name": "Fixture Shirt",
+            "product_id": "p0_shirt",
+            "item_id": "p0_shirt_s_blue",
+            "price": 20.0,
+            "options": {
+              "size": "S",
+              "color": "blue"
+            }
+          },
+          {
+            "name": "Fixture Mug",
+            "product_id": "p0_mug",
+            "item_id": "p0_mug_small",
+            "price": 10.0,
+            "options": {
+              "capacity": "300 ml",
+              "color": "white"
+            }
+          }
+        ],
+        "status": "exchange requested",
+        "fulfillments": [
+          {
+            "tracking_id": [
+              "P0_TRACK_1"
+            ],
+            "item_ids": [
+              "p0_shirt_s_blue",
+              "p0_shirt_s_blue",
+              "p0_mug_small"
+            ]
+          }
+        ],
+        "payments": [
+          {
+            "transaction_type": "payment",
+            "amount": 50.0,
+            "payment_method_id": "p0_card"
+          },
+          {
+            "transaction_type": "payment",
+            "amount": 10.0,
+            "payment_method_id": "p0_gift"
+          }
+        ],
+        "cancellation": null,
+        "exchange": {
+          "replacements": [
+            {
+              "existing_item_id": "p0_shirt_s_blue",
+              "replacement_item_id": "p0_shirt_m_blue"
+            },
+            {
+              "existing_item_id": "p0_shirt_s_blue",
+              "replacement_item_id": "p0_shirt_m_blue"
+            }
+          ],
+          "payment_method_id": "p0_gift",
+          "price_difference": 10.0
+        },
+        "return_request": null
+      },
+      {
+        "order_id": "#P0-RETURN",
+        "customer_id": "p0_customer_a",
+        "shipping_address": {
+          "address_line_1": "10 Synthetic Avenue",
+          "address_line_2": null,
+          "city": "New York",
+          "region": "NY",
+          "country": "USA",
+          "postal_code": "10001"
+        },
+        "items": [
+          {
+            "name": "Fixture Shirt",
+            "product_id": "p0_shirt",
+            "item_id": "p0_shirt_s_blue",
+            "price": 20.0,
+            "options": {
+              "size": "S",
+              "color": "blue"
+            }
+          },
+          {
+            "name": "Fixture Shirt",
+            "product_id": "p0_shirt",
+            "item_id": "p0_shirt_s_blue",
+            "price": 20.0,
+            "options": {
+              "size": "S",
+              "color": "blue"
+            }
+          },
+          {
+            "name": "Fixture Mug",
+            "product_id": "p0_mug",
+            "item_id": "p0_mug_small",
+            "price": 10.0,
+            "options": {
+              "capacity": "300 ml",
+              "color": "white"
+            }
+          }
+        ],
+        "status": "return requested",
+        "fulfillments": [
+          {
+            "tracking_id": [
+              "P0_TRACK_1"
+            ],
+            "item_ids": [
+              "p0_shirt_s_blue",
+              "p0_shirt_s_blue",
+              "p0_mug_small"
+            ]
+          }
+        ],
+        "payments": [
+          {
+            "transaction_type": "payment",
+            "amount": 50.0,
+            "payment_method_id": "p0_card"
+          }
+        ],
+        "cancellation": null,
+        "exchange": null,
+        "return_request": {
+          "item_ids": [
+            "p0_shirt_s_blue",
+            "p0_shirt_s_blue"
+          ],
+          "refund_payment_method_id": "p0_card"
+        }
+      },
+      {
+        "order_id": "#P0-AMBIGUOUS",
+        "customer_id": "p0_customer_a",
+        "shipping_address": {
+          "address_line_1": "10 Synthetic Avenue",
+          "address_line_2": null,
+          "city": "New York",
+          "region": "NY",
+          "country": "USA",
+          "postal_code": "10001"
+        },
+        "items": [
+          {
+            "name": "Fixture Shirt",
+            "product_id": "p0_shirt",
+            "item_id": "p0_shirt_s_blue",
+            "price": 20.0,
+            "options": {
+              "size": "S",
+              "color": "blue"
+            }
+          },
+          {
+            "name": "Fixture Shirt",
+            "product_id": "p0_shirt",
+            "item_id": "p0_shirt_s_blue",
+            "price": 18.0,
+            "options": {
+              "size": "S",
+              "color": "blue"
+            }
+          },
+          {
+            "name": "Fixture Mug",
+            "product_id": "p0_mug",
+            "item_id": "p0_mug_small",
+            "price": 10.0,
+            "options": {
+              "capacity": "300 ml",
+              "color": "white"
+            }
+          }
+        ],
+        "status": "pending",
+        "fulfillments": [],
+        "payments": [
+          {
+            "transaction_type": "payment",
+            "amount": 48.0,
+            "payment_method_id": "p0_card"
+          }
+        ],
+        "cancellation": null,
+        "exchange": null,
+        "return_request": null
+      },
+      {
+        "order_id": "#P0-FOREIGN",
+        "customer_id": "p0_customer_b",
+        "shipping_address": {
+          "address_line_1": "10 Synthetic Avenue",
+          "address_line_2": null,
+          "city": "New York",
+          "region": "NY",
+          "country": "USA",
+          "postal_code": "10001"
+        },
+        "items": [
+          {
+            "name": "Fixture Mug",
+            "product_id": "p0_mug",
+            "item_id": "p0_mug_small",
+            "price": 10.0,
+            "options": {
+              "capacity": "300 ml",
+              "color": "white"
+            }
+          }
+        ],
+        "status": "pending",
+        "fulfillments": [],
+        "payments": [
+          {
+            "transaction_type": "payment",
+            "amount": 10.0,
+            "payment_method_id": "p0_other_card"
+          }
+        ],
+        "cancellation": null,
+        "exchange": null,
+        "return_request": null
+      },
+      {
+        "order_id": "#P0-NEGATIVE",
+        "customer_id": "p0_customer_a",
+        "shipping_address": {
+          "address_line_1": "10 Synthetic Avenue",
+          "address_line_2": null,
+          "city": "New York",
+          "region": "NY",
+          "country": "USA",
+          "postal_code": "10001"
+        },
+        "items": [
+          {
+            "name": "Fixture Shirt",
+            "product_id": "p0_shirt",
+            "item_id": "p0_shirt_m_blue",
+            "price": 25.0,
+            "options": {
+              "size": "M",
+              "color": "blue"
+            }
+          },
+          {
+            "name": "Fixture Shirt",
+            "product_id": "p0_shirt",
+            "item_id": "p0_shirt_m_blue",
+            "price": 25.0,
+            "options": {
+              "size": "M",
+              "color": "blue"
+            }
+          },
+          {
+            "name": "Fixture Mug",
+            "product_id": "p0_mug",
+            "item_id": "p0_mug_large",
+            "price": 12.0,
+            "options": {
+              "capacity": "450 ml",
+              "color": "white"
+            }
+          }
+        ],
+        "status": "delivered",
+        "fulfillments": [
+          {
+            "tracking_id": [
+              "P0_TRACK_NEGATIVE"
+            ],
+            "item_ids": [
+              "p0_shirt_m_blue",
+              "p0_shirt_m_blue",
+              "p0_mug_large"
+            ]
+          }
+        ],
+        "payments": [
+          {
+            "transaction_type": "payment",
+            "amount": 62.0,
+            "payment_method_id": "p0_card"
+          }
+        ],
+        "cancellation": null,
+        "exchange": null,
+        "return_request": null
+      }
+    ]
+  },
+  "wire_examples": [
+    {
+      "operation_id": "searchCustomers",
+      "request": {
+        "method": "POST",
+        "path_template": "/v1/customers/search",
+        "path_parameters": {},
+        "body": {
+          "email": "alex.p0@example.test"
+        }
+      },
+      "response": {
+        "status_code": 200,
+        "body": {
+          "customer_id": "p0_customer_a"
+        }
+      }
+    },
+    {
+      "operation_id": "getCustomer",
+      "request": {
+        "method": "GET",
+        "path_template": "/v1/customers/{customer_id}",
+        "path_parameters": {
+          "customer_id": "p0_customer_a"
+        }
+      },
+      "response": {
+        "status_code": 200,
+        "body": {
+          "customer_id": "p0_customer_a",
+          "name": {
+            "first_name": "Alex",
+            "last_name": "Li"
+          },
+          "default_shipping_address": {
+            "address_line_1": "10 Synthetic Avenue",
+            "address_line_2": null,
+            "city": "New York",
+            "region": "NY",
+            "country": "USA",
+            "postal_code": "10001"
+          },
+          "email": "alex.p0@example.test",
+          "payment_methods": [
+            {
+              "source": "credit_card",
+              "id": "p0_card",
+              "brand": "visa",
+              "last_four": "1234"
+            },
+            {
+              "source": "paypal",
+              "id": "p0_paypal"
+            },
+            {
+              "source": "gift_card",
+              "id": "p0_gift",
+              "balance": 80.0
+            },
+            {
+              "source": "gift_card",
+              "id": "p0_gift_low",
+              "balance": 5.0
+            }
+          ],
+          "order_ids": [
+            "#P0-PENDING",
+            "#P0-MODIFIED",
+            "#P0-PROCESSED",
+            "#P0-DELIVERED",
+            "#P0-CANCELLED",
+            "#P0-EXCHANGE",
+            "#P0-RETURN",
+            "#P0-AMBIGUOUS"
+          ]
+        }
+      }
+    },
+    {
+      "operation_id": "replaceCustomerDefaultShippingAddress",
+      "request": {
+        "method": "PUT",
+        "path_template": "/v1/customers/{customer_id}/default-shipping-address",
+        "path_parameters": {
+          "customer_id": "p0_customer_a"
+        },
+        "body": {
+          "address_line_1": "20 Fixture Lane",
+          "address_line_2": "Unit 3C",
+          "city": "New York",
+          "region": "NY",
+          "country": "USA",
+          "postal_code": "10001"
+        }
+      },
+      "response": {
+        "status_code": 200,
+        "body": {
+          "customer_id": "p0_customer_a",
+          "default_shipping_address": {
+            "address_line_1": "20 Fixture Lane",
+            "address_line_2": "Unit 3C",
+            "city": "New York",
+            "region": "NY",
+            "country": "USA",
+            "postal_code": "10001"
+          }
+        }
+      }
+    },
+    {
+      "operation_id": "listProducts",
+      "request": {
+        "method": "GET",
+        "path_template": "/v1/catalog/products",
+        "path_parameters": {}
+      },
+      "response": {
+        "status_code": 200,
+        "body": {
+          "products": [
+            {
+              "product_id": "p0_shirt",
+              "name": "Fixture Shirt"
+            },
+            {
+              "product_id": "p0_mug",
+              "name": "Fixture Mug"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "operation_id": "getProduct",
+      "request": {
+        "method": "GET",
+        "path_template": "/v1/catalog/products/{product_id}",
+        "path_parameters": {
+          "product_id": "p0_shirt"
+        }
+      },
+      "response": {
+        "status_code": 200,
+        "body": {
+          "product_id": "p0_shirt",
+          "name": "Fixture Shirt",
+          "items": [
+            {
+              "item_id": "p0_shirt_s_blue",
+              "options": {
+                "size": "S",
+                "color": "blue"
+              },
+              "available": true,
+              "price": 20.0
+            },
+            {
+              "item_id": "p0_shirt_m_blue",
+              "options": {
+                "size": "M",
+                "color": "blue"
+              },
+              "available": true,
+              "price": 25.0
+            },
+            {
+              "item_id": "p0_shirt_m_black",
+              "options": {
+                "size": "M",
+                "color": "black"
+              },
+              "available": false,
+              "price": 23.0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "operation_id": "getCatalogItem",
+      "request": {
+        "method": "GET",
+        "path_template": "/v1/catalog/items/{item_id}",
+        "path_parameters": {
+          "item_id": "p0_shirt_s_blue"
+        }
+      },
+      "response": {
+        "status_code": 200,
+        "body": {
+          "item_id": "p0_shirt_s_blue",
+          "options": {
+            "size": "S",
+            "color": "blue"
+          },
+          "available": true,
+          "price": 20.0
+        }
+      }
+    },
+    {
+      "operation_id": "getOrder",
+      "request": {
+        "method": "GET",
+        "path_template": "/v1/orders/{order_id}",
+        "path_parameters": {
+          "order_id": "#P0-PENDING"
+        }
+      },
+      "response": {
+        "status_code": 200,
+        "body": {
+          "order_id": "#P0-PENDING",
+          "customer_id": "p0_customer_a",
+          "shipping_address": {
+            "address_line_1": "10 Synthetic Avenue",
+            "address_line_2": null,
+            "city": "New York",
+            "region": "NY",
+            "country": "USA",
+            "postal_code": "10001"
+          },
+          "items": [
+            {
+              "name": "Fixture Shirt",
+              "product_id": "p0_shirt",
+              "item_id": "p0_shirt_s_blue",
+              "price": 20.0,
+              "options": {
+                "size": "S",
+                "color": "blue"
+              }
+            },
+            {
+              "name": "Fixture Shirt",
+              "product_id": "p0_shirt",
+              "item_id": "p0_shirt_s_blue",
+              "price": 20.0,
+              "options": {
+                "size": "S",
+                "color": "blue"
+              }
+            },
+            {
+              "name": "Fixture Mug",
+              "product_id": "p0_mug",
+              "item_id": "p0_mug_small",
+              "price": 10.0,
+              "options": {
+                "capacity": "300 ml",
+                "color": "white"
+              }
+            }
+          ],
+          "status": "pending",
+          "fulfillments": [],
+          "payments": [
+            {
+              "transaction_type": "payment",
+              "amount": 50.0,
+              "payment_method_id": "p0_card"
+            }
+          ],
+          "cancellation": null,
+          "exchange": null,
+          "return_request": null
+        }
+      }
+    },
+    {
+      "operation_id": "replaceOrderShippingAddress",
+      "request": {
+        "method": "PUT",
+        "path_template": "/v1/orders/{order_id}/shipping-address",
+        "path_parameters": {
+          "order_id": "#P0-PENDING"
+        },
+        "body": {
+          "address_line_1": "20 Fixture Lane",
+          "address_line_2": "Unit 3C",
+          "city": "New York",
+          "region": "NY",
+          "country": "USA",
+          "postal_code": "10001"
+        }
+      },
+      "response": {
+        "status_code": 200,
+        "body": {
+          "order_id": "#P0-PENDING",
+          "shipping_address": {
+            "address_line_1": "20 Fixture Lane",
+            "address_line_2": "Unit 3C",
+            "city": "New York",
+            "region": "NY",
+            "country": "USA",
+            "postal_code": "10001"
+          }
+        }
+      }
+    },
+    {
+      "operation_id": "replaceOrderPaymentMethod",
+      "request": {
+        "method": "PUT",
+        "path_template": "/v1/orders/{order_id}/payment-method",
+        "path_parameters": {
+          "order_id": "#P0-PENDING"
+        },
+        "body": {
+          "payment_method_id": "p0_paypal"
+        }
+      },
+      "response": {
+        "status_code": 200,
+        "body": {
+          "order_id": "#P0-PENDING",
+          "payments": [
+            {
+              "transaction_type": "payment",
+              "amount": 50.0,
+              "payment_method_id": "p0_card"
+            },
+            {
+              "transaction_type": "payment",
+              "amount": 50.0,
+              "payment_method_id": "p0_paypal"
+            },
+            {
+              "transaction_type": "refund",
+              "amount": 50.0,
+              "payment_method_id": "p0_card"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "operation_id": "createOrderCancellation",
+      "request": {
+        "method": "POST",
+        "path_template": "/v1/orders/{order_id}/cancellations",
+        "path_parameters": {
+          "order_id": "#P0-PENDING"
+        },
+        "body": {
+          "reason": "no longer needed"
+        }
+      },
+      "response": {
+        "status_code": 200,
+        "body": {
+          "order_id": "#P0-PENDING",
+          "status": "cancelled",
+          "cancellation": {
+            "reason": "no longer needed"
+          },
+          "payments": [
+            {
+              "transaction_type": "payment",
+              "amount": 50.0,
+              "payment_method_id": "p0_card"
+            },
+            {
+              "transaction_type": "refund",
+              "amount": 50.0,
+              "payment_method_id": "p0_card"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "operation_id": "createOrderItemModification",
+      "request": {
+        "method": "POST",
+        "path_template": "/v1/orders/{order_id}/item-modifications",
+        "path_parameters": {
+          "order_id": "#P0-PENDING"
+        },
+        "body": {
+          "replacements": [
+            {
+              "existing_item_id": "p0_shirt_s_blue",
+              "replacement_item_id": "p0_shirt_m_blue"
+            },
+            {
+              "existing_item_id": "p0_shirt_s_blue",
+              "replacement_item_id": "p0_shirt_m_blue"
+            }
+          ],
+          "payment_method_id": "p0_gift"
+        }
+      },
+      "response": {
+        "status_code": 200,
+        "body": {
+          "order_id": "#P0-PENDING",
+          "status": "pending (items modified)",
+          "items": [
+            {
+              "name": "Fixture Shirt",
+              "product_id": "p0_shirt",
+              "item_id": "p0_shirt_m_blue",
+              "price": 25.0,
+              "options": {
+                "size": "M",
+                "color": "blue"
+              }
+            },
+            {
+              "name": "Fixture Shirt",
+              "product_id": "p0_shirt",
+              "item_id": "p0_shirt_m_blue",
+              "price": 25.0,
+              "options": {
+                "size": "M",
+                "color": "blue"
+              }
+            },
+            {
+              "name": "Fixture Mug",
+              "product_id": "p0_mug",
+              "item_id": "p0_mug_small",
+              "price": 10.0,
+              "options": {
+                "capacity": "300 ml",
+                "color": "white"
+              }
+            }
+          ],
+          "payments": [
+            {
+              "transaction_type": "payment",
+              "amount": 50.0,
+              "payment_method_id": "p0_card"
+            },
+            {
+              "transaction_type": "payment",
+              "amount": 10.0,
+              "payment_method_id": "p0_gift"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "operation_id": "createOrderReturn",
+      "request": {
+        "method": "POST",
+        "path_template": "/v1/orders/{order_id}/returns",
+        "path_parameters": {
+          "order_id": "#P0-DELIVERED"
+        },
+        "body": {
+          "item_ids": [
+            "p0_shirt_s_blue",
+            "p0_shirt_s_blue"
+          ],
+          "refund_payment_method_id": "p0_card"
+        }
+      },
+      "response": {
+        "status_code": 200,
+        "body": {
+          "order_id": "#P0-DELIVERED",
+          "status": "return requested",
+          "return_request": {
+            "item_ids": [
+              "p0_shirt_s_blue",
+              "p0_shirt_s_blue"
+            ],
+            "refund_payment_method_id": "p0_card"
+          }
+        }
+      }
+    },
+    {
+      "operation_id": "createOrderExchange",
+      "request": {
+        "method": "POST",
+        "path_template": "/v1/orders/{order_id}/exchanges",
+        "path_parameters": {
+          "order_id": "#P0-DELIVERED"
+        },
+        "body": {
+          "replacements": [
+            {
+              "existing_item_id": "p0_shirt_s_blue",
+              "replacement_item_id": "p0_shirt_m_blue"
+            },
+            {
+              "existing_item_id": "p0_shirt_s_blue",
+              "replacement_item_id": "p0_shirt_m_blue"
+            }
+          ],
+          "payment_method_id": "p0_gift"
+        }
+      },
+      "response": {
+        "status_code": 200,
+        "body": {
+          "order_id": "#P0-DELIVERED",
+          "status": "exchange requested",
+          "exchange": {
+            "replacements": [
+              {
+                "existing_item_id": "p0_shirt_s_blue",
+                "replacement_item_id": "p0_shirt_m_blue"
+              },
+              {
+                "existing_item_id": "p0_shirt_s_blue",
+                "replacement_item_id": "p0_shirt_m_blue"
+              }
+            ],
+            "payment_method_id": "p0_gift",
+            "price_difference": 10.0
+          }
+        }
+      }
+    },
+    {
+      "operation_id": "createConversationTransfer",
+      "request": {
+        "method": "POST",
+        "path_template": "/v1/conversations/{conversation_id}/transfers",
+        "path_parameters": {
+          "conversation_id": "p0_conversation"
+        },
+        "body": {
+          "summary": "Offline fixture: customer explicitly requested a human."
+        }
+      },
+      "response": {
+        "status_code": 201,
+        "body": {
+          "transfer_id": "p0_transfer",
+          "status": "accepted"
+        }
+      }
+    }
+  ],
+  "request_variants": [
+    {
+      "id": "search_by_full_name",
+      "operation_id": "searchCustomers",
+      "body": {
+        "first_name": "Alex",
+        "last_name": "Li",
+        "postal_code": "10001"
+      }
+    }
+  ],
+  "negative_schema_examples": [
+    {
+      "id": "partial_address",
+      "schema_kind": "component",
+      "schema_name": "Address",
+      "value": {
+        "address_line_1": "20 Fixture Lane"
+      }
+    },
+    {
+      "id": "string_gift_balance",
+      "schema_kind": "component",
+      "schema_name": "GiftCard",
+      "value": {
+        "source": "gift_card",
+        "id": "p0_gift",
+        "balance": "80.00"
+      }
+    },
+    {
+      "id": "boolean_amount",
+      "schema_kind": "component",
+      "schema_name": "OrderPayment",
+      "value": {
+        "transaction_type": "payment",
+        "amount": true,
+        "payment_method_id": "p0_card"
+      }
+    },
+    {
+      "id": "invented_product_id",
+      "schema_kind": "component",
+      "schema_name": "CatalogItem",
+      "value": {
+        "item_id": "p0_shirt_s_blue",
+        "options": {
+          "size": "S",
+          "color": "blue"
+        },
+        "available": true,
+        "price": 20.0,
+        "product_id": "p0_shirt"
+      }
+    },
+    {
+      "id": "invented_quantity",
+      "schema_kind": "request",
+      "operation_id": "createOrderItemModification",
+      "value": {
+        "replacements": [
+          {
+            "existing_item_id": "p0_shirt_s_blue",
+            "replacement_item_id": "p0_shirt_m_blue",
+            "quantity": 2
+          }
+        ],
+        "payment_method_id": "p0_gift"
+      }
+    },
+    {
+      "id": "unknown_status",
+      "schema_kind": "response",
+      "operation_id": "getOrder",
+      "status_code": 200,
+      "value": {
+        "order_id": "#P0-PENDING",
+        "customer_id": "p0_customer_a",
+        "shipping_address": {
+          "address_line_1": "10 Synthetic Avenue",
+          "address_line_2": null,
+          "city": "New York",
+          "region": "NY",
+          "country": "USA",
+          "postal_code": "10001"
+        },
+        "items": [
+          {
+            "name": "Fixture Shirt",
+            "product_id": "p0_shirt",
+            "item_id": "p0_shirt_s_blue",
+            "price": 20.0,
+            "options": {
+              "size": "S",
+              "color": "blue"
+            }
+          },
+          {
+            "name": "Fixture Shirt",
+            "product_id": "p0_shirt",
+            "item_id": "p0_shirt_s_blue",
+            "price": 20.0,
+            "options": {
+              "size": "S",
+              "color": "blue"
+            }
+          },
+          {
+            "name": "Fixture Mug",
+            "product_id": "p0_mug",
+            "item_id": "p0_mug_small",
+            "price": 10.0,
+            "options": {
+              "capacity": "300 ml",
+              "color": "white"
+            }
+          }
+        ],
+        "status": "shipped",
+        "fulfillments": [],
+        "payments": [
+          {
+            "transaction_type": "payment",
+            "amount": 50.0,
+            "payment_method_id": "p0_card"
+          }
+        ],
+        "cancellation": null,
+        "exchange": null,
+        "return_request": null
+      }
+    },
+    {
+      "id": "invented_notes",
+      "schema_kind": "response",
+      "operation_id": "getCustomer",
+      "status_code": 200,
+      "value": {
+        "customer_id": "p0_customer_a",
+        "name": {
+          "first_name": "Alex",
+          "last_name": "Li"
+        },
+        "default_shipping_address": {
+          "address_line_1": "10 Synthetic Avenue",
+          "address_line_2": null,
+          "city": "New York",
+          "region": "NY",
+          "country": "USA",
+          "postal_code": "10001"
+        },
+        "email": "alex.p0@example.test",
+        "payment_methods": [
+          {
+            "source": "credit_card",
+            "id": "p0_card",
+            "brand": "visa",
+            "last_four": "1234"
+          },
+          {
+            "source": "paypal",
+            "id": "p0_paypal"
+          },
+          {
+            "source": "gift_card",
+            "id": "p0_gift",
+            "balance": 80.0
+          },
+          {
+            "source": "gift_card",
+            "id": "p0_gift_low",
+            "balance": 5.0
+          }
+        ],
+        "order_ids": [
+          "#P0-PENDING",
+          "#P0-MODIFIED",
+          "#P0-PROCESSED",
+          "#P0-DELIVERED",
+          "#P0-CANCELLED",
+          "#P0-EXCHANGE",
+          "#P0-RETURN",
+          "#P0-AMBIGUOUS"
+        ],
+        "notes": "not an allowed customer field"
+      }
+    }
+  ],
+  "schema_valid_policy_counterexamples": [
+    {
+      "id": "empty_identity_selector",
+      "operation_id": "searchCustomers",
+      "schema_kind": "request",
+      "value": {},
+      "policies": [
+        "AUTH-02"
+      ],
+      "required_behavior": "Reject incomplete selector before reading customer details."
+    },
+    {
+      "id": "unsupported_cancel_reason",
+      "operation_id": "createOrderCancellation",
+      "schema_kind": "request",
+      "value": {
+        "reason": "price complaint"
+      },
+      "policies": [
+        "CANCEL-02"
+      ],
+      "required_behavior": "Explain restriction; do not map price complaint to no longer needed."
+    },
+    {
+      "id": "cross_product_replacement",
+      "operation_id": "createOrderItemModification",
+      "schema_kind": "request",
+      "value": {
+        "replacements": [
+          {
+            "existing_item_id": "p0_shirt_s_blue",
+            "replacement_item_id": "p0_mug_large"
+          }
+        ],
+        "payment_method_id": "p0_gift"
+      },
+      "policies": [
+        "ITEM-01"
+      ],
+      "required_behavior": "Reject cross-product replacement without writing."
+    },
+    {
+      "id": "insufficient_full_payment",
+      "operation_id": "replaceOrderPaymentMethod",
+      "schema_kind": "request",
+      "value": {
+        "payment_method_id": "p0_gift_low"
+      },
+      "policies": [
+        "PAY-02"
+      ],
+      "required_behavior": "Balance 5 cannot cover pending total 50; do not replace payment."
+    },
+    {
+      "id": "unconfirmed_cancellation",
+      "operation_id": "createOrderCancellation",
+      "schema_kind": "request",
+      "value": {
+        "reason": "ordered by mistake"
+      },
+      "policies": [
+        "CONF-01",
+        "CONF-03"
+      ],
+      "required_behavior": "A shape-valid request is not permission to write; require the current confirmed proposal."
+    }
+  ],
+  "identity_dialogue_blueprints": [
+    {
+      "id": "identity_name_alternative_phrase",
+      "messages": [
+        "Li is my family name; Alex is my given name. The account ZIP is 10001."
+      ],
+      "eventual_selector": {
+        "first_name": "Alex",
+        "last_name": "Li",
+        "postal_code": "10001"
+      },
+      "policies": [
+        "AUTH-02",
+        "ARCH-01"
+      ]
+    },
+    {
+      "id": "identity_multiturn",
+      "messages": [
+        "The account is under Alex Li.",
+        "You need my postal code? It is 10001."
+      ],
+      "eventual_selector": {
+        "first_name": "Alex",
+        "last_name": "Li",
+        "postal_code": "10001"
+      },
+      "policies": [
+        "AUTH-02",
+        "ARCH-01"
+      ]
+    },
+    {
+      "id": "identity_correction",
+      "messages": [
+        "Alex Li, ZIP 10002.",
+        "Sorry, the ZIP was a typo. It should be 10001."
+      ],
+      "eventual_selector": {
+        "first_name": "Alex",
+        "last_name": "Li",
+        "postal_code": "10001"
+      },
+      "policies": [
+        "AUTH-02",
+        "ARCH-01"
+      ]
+    },
+    {
+      "id": "identity_chinese",
+      "messages": [
+        "我的账户姓 Li，名字 Alex，登记邮编是 10001。"
+      ],
+      "eventual_selector": {
+        "first_name": "Alex",
+        "last_name": "Li",
+        "postal_code": "10001"
+      },
+      "policies": [
+        "AUTH-02",
+        "ARCH-01"
+      ]
+    },
+    {
+      "id": "identity_id_only",
+      "messages": [
+        "My customer ID is p0_customer_a. Please show my orders."
+      ],
+      "required_behavior": "Ask for approved independent verification information; no profile/order disclosure.",
+      "policies": [
+        "AUTH-01",
+        "AUTH-03"
+      ]
+    },
+    {
+      "id": "identity_claim_mismatch",
+      "messages": [
+        "My ID is p0_customer_a; try casey.p0@example.test."
+      ],
+      "required_behavior": "Independent search finds B and does not verify claimed A; no account details.",
+      "policies": [
+        "AUTH-03",
+        "AUTH-04"
+      ]
+    }
+  ],
+  "error_examples": [
+    {
+      "status_code": 413,
+      "body": {
+        "error": {
+          "code": "request_too_large",
+          "message": "Synthetic oversized request."
+        }
+      }
+    },
+    {
+      "status_code": 502,
+      "body": {
+        "error": {
+          "code": "response_too_large",
+          "message": "Synthetic oversized response."
+        }
+      }
+    },
+    {
+      "status_code": 409,
+      "body": {
+        "error": {
+          "code": "resource_conflict",
+          "message": "Synthetic order state conflict."
+        }
+      }
+    },
+    {
+      "status_code": 422,
+      "body": {
+        "error": {
+          "code": "business_rule_violation",
+          "message": "Synthetic business restriction."
+        }
+      }
+    }
+  ],
+  "additional_wire_examples": [
+    {
+      "operation_id": "createOrderExchange",
+      "request": {
+        "method": "POST",
+        "path_template": "/v1/orders/{order_id}/exchanges",
+        "path_parameters": {
+          "order_id": "#P0-NEGATIVE"
+        },
+        "body": {
+          "replacements": [
+            {
+              "existing_item_id": "p0_shirt_m_blue",
+              "replacement_item_id": "p0_shirt_s_blue"
+            },
+            {
+              "existing_item_id": "p0_shirt_m_blue",
+              "replacement_item_id": "p0_shirt_s_blue"
+            },
+            {
+              "existing_item_id": "p0_mug_large",
+              "replacement_item_id": "p0_mug_small"
+            }
+          ],
+          "payment_method_id": "p0_paypal"
+        }
+      },
+      "response": {
+        "status_code": 200,
+        "body": {
+          "order_id": "#P0-NEGATIVE",
+          "status": "exchange requested",
+          "exchange": {
+            "replacements": [
+              {
+                "existing_item_id": "p0_shirt_m_blue",
+                "replacement_item_id": "p0_shirt_s_blue"
+              },
+              {
+                "existing_item_id": "p0_shirt_m_blue",
+                "replacement_item_id": "p0_shirt_s_blue"
+              },
+              {
+                "existing_item_id": "p0_mug_large",
+                "replacement_item_id": "p0_mug_small"
+              }
+            ],
+            "payment_method_id": "p0_paypal",
+            "price_difference": -12.0
+          }
+        }
+      },
+      "id": "negative_exchange_difference"
+    }
+  ]
+}

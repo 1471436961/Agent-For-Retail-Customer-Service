@@ -1,0 +1,75 @@
+{
+  "status": "passed",
+  "generated_at_utc": "2026-10-09T15:14:55.125442+00:00",
+  "validation_kind": "Offline schema and synthetic evidence consistency; no Agent, LLM, API or evaluation executed",
+  "contract_sha256": "f2268b325c442206b1234c4a16dbd5a7f4ff81a925be56d9fb0be59cf8a56594",
+  "fixture_sha256": "c30466f7457024959914e1fc4a77ddb63b281d10cf88740e807f789a5290e591",
+  "operations": {
+    "total": 14,
+    "read": 6,
+    "business_write": 7,
+    "transfer": 1
+  },
+  "schema_checks": {
+    "request_bodies": 11,
+    "normal_responses": 15,
+    "path_parameters": 13,
+    "record_snapshots": 19,
+    "schema_valid_policy_counterexamples": 5,
+    "dialogue_selector_shapes": 4,
+    "error_envelopes": 4
+  },
+  "accepted_schema_samples": 71,
+  "negative_examples_rejected": [
+    {
+      "id": "partial_address",
+      "schema_errors": 4
+    },
+    {
+      "id": "string_gift_balance",
+      "schema_errors": 1
+    },
+    {
+      "id": "boolean_amount",
+      "schema_errors": 1
+    },
+    {
+      "id": "invented_product_id",
+      "schema_errors": 1
+    },
+    {
+      "id": "invented_quantity",
+      "schema_errors": 1
+    },
+    {
+      "id": "unknown_status",
+      "schema_errors": 1
+    },
+    {
+      "id": "invented_notes",
+      "schema_errors": 1
+    }
+  ],
+  "records": {
+    "customers": 2,
+    "products": 2,
+    "catalog_variants": 5,
+    "orders": 10
+  },
+  "policy_entries": 52,
+  "coverage_rows": 22,
+  "identity_dialogue_blueprints": {
+    "count": 6,
+    "semantic_tests_executed": false
+  },
+  "fixture_relations_and_monetary_types": "passed",
+  "scope": {
+    "binding": "3d81f316-16c1-452d-939f-48776870bd23",
+    "branch": "main",
+    "domain": "retail_plus",
+    "language": "python",
+    "task": "t1",
+    "case_ids": null
+  },
+  "business_agent_implemented": false
+}

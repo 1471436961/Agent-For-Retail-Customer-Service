@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "enterprise-customer-agent"
+version = "0.1.0"
+description = "Multi-module Enterprise AI learner project"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["agent"]
+include = ["support_agent*"]
+
+# Packaging metadata is for local development, not a remote install instruction.
+# tau2 is provided by the evaluation runtime, not installed by this package.

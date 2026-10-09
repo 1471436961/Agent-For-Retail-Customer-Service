@@ -1,0 +1,29 @@
+{
+  "version": 2,
+  "cases": [
+    {
+      "id": "pending_order",
+      "description": "Pending multi-item order with three payment methods.",
+      "customer_id": "developer_pending_9001",
+      "email": "pending.customer@example.test",
+      "order_id": "#W9000001",
+      "payment_method_ids": {
+        "credit_card": "credit_card_9000001",
+        "paypal": "paypal_9000002",
+        "gift_card": "gift_card_9000003"
+      }
+    },
+    {
+      "id": "delivered_order",
+      "description": "Delivered multi-item order for returns and exchanges.",
+      "customer_id": "developer_delivered_9002",
+      "email": "delivered.customer@example.test",
+      "order_id": "#W9000002",
+      "payment_method_ids": {
+        "credit_card": "credit_card_9000011",
+        "paypal": "paypal_9000012",
+        "gift_card": "gift_card_9000013"
+      }
+    }
+  ]
+}

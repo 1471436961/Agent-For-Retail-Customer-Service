@@ -1,0 +1,1 @@
+{"private":true,"scripts":{"evaluate":"node scripts/evaluate.mjs"},"engines":{"node":">=20"}}

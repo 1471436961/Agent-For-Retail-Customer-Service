@@ -1,0 +1,46 @@
+{
+  "allowed_agent_models": [
+    {
+      "model": "openai/enterprise-haiku",
+      "constraints": {
+        "max_tokens": 1024
+      }
+    }
+  ],
+  "performance_requirements": [
+    {
+      "id": "agent_credit_budget",
+      "type": "credits",
+      "measurement": "agent_model_calls",
+      "budget": 0.32,
+      "models": [
+        "gpt-5.6-sol",
+        "anthropic/claude-opus-5",
+        "google/gemini-3.1-pro-preview",
+        "moonshotai/kimi-k3",
+        "deepseek/deepseek-v4-flash",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+        "anthropic/claude-haiku-4-5",
+        "google/gemini-3-flash-preview",
+        "qwen/qwen3.8-27b",
+        "google/gemma-4-31b-it",
+        "gpt-5.4-nano",
+        "qwen/qwen3-30b-a3b-instruct-2507",
+        "google/gemma-4-26b-a4b-it",
+        "gpt-4.1-mini",
+        "moonshotai/kimi-k2.6",
+        "gpt-4o-mini",
+        "anthropic/claude-sonnet-5",
+        "gpt-5-mini",
+        "google/gemini-3.1-flash-lite"
+      ]
+    }
+  ],
+  "x-classroom-notes": {
+    "version": "contract-notes-v1",
+    "effective_models": "Use the injected gateway available_models/availableModels at runtime.",
+    "research_budget": "performance_requirements is upstream research context, not a model allowlist or USD quota. Classroom model configs do not inject that credit rate card.",
+    "documentation": "INTERFACE-CLARIFICATIONS.md"
+  }
+}

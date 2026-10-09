@@ -1,0 +1,2630 @@
+{
+  "openapi": "3.1.0",
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "info": {
+    "title": "Customer Service API",
+    "version": "3.1.0",
+    "description": "REST API for programmatic access to customer service business resources. All operations exchange JSON over HTTPS."
+  },
+  "paths": {
+    "/v1/customers/search": {
+      "post": {
+        "operationId": "searchCustomers",
+        "summary": "Search for a customer",
+        "description": "Find one customer using either an email address or the complete name-and-postal-code selector.",
+        "x-api-mutates-state": false,
+        "x-api-idempotency": "safe",
+        "x-api-automatic-retries": "allowed",
+        "x-api-consistency": "strong",
+        "x-api-pagination": "none",
+        "x-api-request-body-max-bytes": 1048576,
+        "x-api-response-body-max-bytes": 4194304,
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "customer_id": {
+                      "title": "Customer Id",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "customer_id"
+                  ],
+                  "title": "CustomerLookupResult",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request does not match the operation schema",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested resource was not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "HTTP method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The resource's current state prevents the operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "JSON request query and body exceed the byte limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request violates a business constraint",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The service produced an invalid or oversized JSON response body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "description": "Provide email alone or a complete name-and-postal-code combination.",
+                "properties": {
+                  "email": {
+                    "anyOf": [
+                      {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Email"
+                  },
+                  "first_name": {
+                    "anyOf": [
+                      {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "First Name"
+                  },
+                  "last_name": {
+                    "anyOf": [
+                      {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Last Name"
+                  },
+                  "postal_code": {
+                    "anyOf": [
+                      {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Postal Code"
+                  }
+                },
+                "title": "RetailCustomerSearchRequest",
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/customers/{customer_id}": {
+      "get": {
+        "operationId": "getCustomer",
+        "summary": "Get a customer",
+        "description": "Return the customer identified by their customer ID.",
+        "x-api-mutates-state": false,
+        "x-api-idempotency": "safe",
+        "x-api-automatic-retries": "allowed",
+        "x-api-consistency": "strong",
+        "x-api-pagination": "none",
+        "x-api-request-body-max-bytes": 1048576,
+        "x-api-response-body-max-bytes": 4194304,
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "customer_id": {
+                      "title": "Customer Id",
+                      "type": "string"
+                    },
+                    "name": {
+                      "$ref": "#/components/schemas/CustomerName"
+                    },
+                    "default_shipping_address": {
+                      "$ref": "#/components/schemas/Address"
+                    },
+                    "email": {
+                      "title": "Email",
+                      "type": "string"
+                    },
+                    "payment_methods": {
+                      "items": {
+                        "anyOf": [
+                          {
+                            "$ref": "#/components/schemas/CreditCard"
+                          },
+                          {
+                            "$ref": "#/components/schemas/GiftCard"
+                          },
+                          {
+                            "$ref": "#/components/schemas/Paypal"
+                          }
+                        ]
+                      },
+                      "title": "Payment Methods",
+                      "type": "array"
+                    },
+                    "order_ids": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "title": "Order Ids",
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "customer_id",
+                    "name",
+                    "default_shipping_address",
+                    "email",
+                    "payment_methods",
+                    "order_ids"
+                  ],
+                  "title": "Customer",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request does not match the operation schema",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested resource was not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "HTTP method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The resource's current state prevents the operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "JSON request query and body exceed the byte limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request violates a business constraint",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The service produced an invalid or oversized JSON response body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ]
+      }
+    },
+    "/v1/customers/{customer_id}/default-shipping-address": {
+      "put": {
+        "operationId": "replaceCustomerDefaultShippingAddress",
+        "summary": "Replace a customer's default shipping address",
+        "description": "Replace the complete default shipping address for one customer.",
+        "x-api-mutates-state": true,
+        "x-api-idempotency": "not_guaranteed",
+        "x-api-automatic-retries": "forbidden",
+        "x-api-consistency": "strong",
+        "x-api-pagination": "none",
+        "x-api-request-body-max-bytes": 1048576,
+        "x-api-response-body-max-bytes": 4194304,
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "customer_id": {
+                      "title": "Customer Id",
+                      "type": "string"
+                    },
+                    "default_shipping_address": {
+                      "$ref": "#/components/schemas/Address"
+                    }
+                  },
+                  "required": [
+                    "customer_id",
+                    "default_shipping_address"
+                  ],
+                  "title": "CustomerDefaultShippingAddress",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request does not match the operation schema",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested resource was not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "HTTP method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The resource's current state prevents the operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "JSON request query and body exceed the byte limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request violates a business constraint",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The service produced an invalid or oversized JSON response body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "address_line_1": {
+                    "minLength": 1,
+                    "title": "Address Line 1",
+                    "type": "string"
+                  },
+                  "address_line_2": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Address Line 2"
+                  },
+                  "city": {
+                    "minLength": 1,
+                    "title": "City",
+                    "type": "string"
+                  },
+                  "region": {
+                    "minLength": 1,
+                    "title": "Region",
+                    "type": "string"
+                  },
+                  "country": {
+                    "minLength": 1,
+                    "title": "Country",
+                    "type": "string"
+                  },
+                  "postal_code": {
+                    "minLength": 1,
+                    "title": "Postal Code",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "address_line_1",
+                  "city",
+                  "region",
+                  "country",
+                  "postal_code"
+                ],
+                "title": "Address",
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/catalog/products": {
+      "get": {
+        "operationId": "listProducts",
+        "summary": "List products",
+        "description": "Return product identifiers and names from the product catalog.",
+        "x-api-mutates-state": false,
+        "x-api-idempotency": "safe",
+        "x-api-automatic-retries": "allowed",
+        "x-api-consistency": "strong",
+        "x-api-pagination": "none",
+        "x-api-request-body-max-bytes": 1048576,
+        "x-api-response-body-max-bytes": 4194304,
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "products": {
+                      "items": {
+                        "$ref": "#/components/schemas/ProductSummary"
+                      },
+                      "title": "Products",
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "products"
+                  ],
+                  "title": "ProductCollection",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request does not match the operation schema",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested resource was not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "HTTP method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The resource's current state prevents the operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "JSON request query and body exceed the byte limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request violates a business constraint",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The service produced an invalid or oversized JSON response body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/catalog/products/{product_id}": {
+      "get": {
+        "operationId": "getProduct",
+        "summary": "Get a product",
+        "description": "Return one catalog product and its purchasable items.",
+        "x-api-mutates-state": false,
+        "x-api-idempotency": "safe",
+        "x-api-automatic-retries": "allowed",
+        "x-api-consistency": "strong",
+        "x-api-pagination": "none",
+        "x-api-request-body-max-bytes": 1048576,
+        "x-api-response-body-max-bytes": 4194304,
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "title": "Name",
+                      "type": "string"
+                    },
+                    "product_id": {
+                      "title": "Product Id",
+                      "type": "string"
+                    },
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/CatalogItem"
+                      },
+                      "title": "Items",
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "product_id",
+                    "items"
+                  ],
+                  "title": "Product",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request does not match the operation schema",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested resource was not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "HTTP method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The resource's current state prevents the operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "JSON request query and body exceed the byte limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request violates a business constraint",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The service produced an invalid or oversized JSON response body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "product_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ]
+      }
+    },
+    "/v1/catalog/items/{item_id}": {
+      "get": {
+        "operationId": "getCatalogItem",
+        "summary": "Get a catalog item",
+        "description": "Return one purchasable catalog item.",
+        "x-api-mutates-state": false,
+        "x-api-idempotency": "safe",
+        "x-api-automatic-retries": "allowed",
+        "x-api-consistency": "strong",
+        "x-api-pagination": "none",
+        "x-api-request-body-max-bytes": 1048576,
+        "x-api-response-body-max-bytes": 4194304,
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "item_id": {
+                      "title": "Item Id",
+                      "type": "string"
+                    },
+                    "options": {
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "title": "Options",
+                      "type": "object"
+                    },
+                    "available": {
+                      "title": "Available",
+                      "type": "boolean"
+                    },
+                    "price": {
+                      "title": "Price",
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "item_id",
+                    "options",
+                    "available",
+                    "price"
+                  ],
+                  "title": "CatalogItem",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request does not match the operation schema",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested resource was not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "HTTP method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The resource's current state prevents the operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "JSON request query and body exceed the byte limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request violates a business constraint",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The service produced an invalid or oversized JSON response body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ]
+      }
+    },
+    "/v1/orders/{order_id}": {
+      "get": {
+        "operationId": "getOrder",
+        "summary": "Get an order",
+        "description": "Return one order, including its items, fulfillment, and payments.",
+        "x-api-mutates-state": false,
+        "x-api-idempotency": "safe",
+        "x-api-automatic-retries": "allowed",
+        "x-api-consistency": "strong",
+        "x-api-pagination": "none",
+        "x-api-request-body-max-bytes": 1048576,
+        "x-api-response-body-max-bytes": 4194304,
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "order_id": {
+                      "title": "Order Id",
+                      "type": "string"
+                    },
+                    "customer_id": {
+                      "title": "Customer Id",
+                      "type": "string"
+                    },
+                    "shipping_address": {
+                      "$ref": "#/components/schemas/Address"
+                    },
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/OrderItem"
+                      },
+                      "title": "Items",
+                      "type": "array"
+                    },
+                    "status": {
+                      "enum": [
+                        "processed",
+                        "pending",
+                        "pending (items modified)",
+                        "delivered",
+                        "cancelled",
+                        "exchange requested",
+                        "return requested"
+                      ],
+                      "title": "Status",
+                      "type": "string"
+                    },
+                    "fulfillments": {
+                      "items": {
+                        "$ref": "#/components/schemas/OrderFulfillment"
+                      },
+                      "title": "Fulfillments",
+                      "type": "array"
+                    },
+                    "payments": {
+                      "items": {
+                        "$ref": "#/components/schemas/OrderPayment"
+                      },
+                      "title": "Payments",
+                      "type": "array"
+                    },
+                    "cancellation": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/OrderCancellation"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null
+                    },
+                    "exchange": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/OrderExchange"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null
+                    },
+                    "return_request": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/OrderReturn"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null
+                    }
+                  },
+                  "required": [
+                    "order_id",
+                    "customer_id",
+                    "shipping_address",
+                    "items",
+                    "status",
+                    "fulfillments",
+                    "payments"
+                  ],
+                  "title": "Order",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request does not match the operation schema",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested resource was not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "HTTP method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The resource's current state prevents the operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "JSON request query and body exceed the byte limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request violates a business constraint",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The service produced an invalid or oversized JSON response body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ]
+      }
+    },
+    "/v1/orders/{order_id}/shipping-address": {
+      "put": {
+        "operationId": "replaceOrderShippingAddress",
+        "summary": "Replace an order shipping address",
+        "description": "Replace the complete shipping address associated with one order.",
+        "x-api-mutates-state": true,
+        "x-api-idempotency": "not_guaranteed",
+        "x-api-automatic-retries": "forbidden",
+        "x-api-consistency": "strong",
+        "x-api-pagination": "none",
+        "x-api-request-body-max-bytes": 1048576,
+        "x-api-response-body-max-bytes": 4194304,
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "order_id": {
+                      "title": "Order Id",
+                      "type": "string"
+                    },
+                    "shipping_address": {
+                      "$ref": "#/components/schemas/Address"
+                    }
+                  },
+                  "required": [
+                    "order_id",
+                    "shipping_address"
+                  ],
+                  "title": "OrderShippingAddressResult",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request does not match the operation schema",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested resource was not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "HTTP method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The resource's current state prevents the operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "JSON request query and body exceed the byte limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request violates a business constraint",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The service produced an invalid or oversized JSON response body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "address_line_1": {
+                    "minLength": 1,
+                    "title": "Address Line 1",
+                    "type": "string"
+                  },
+                  "address_line_2": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Address Line 2"
+                  },
+                  "city": {
+                    "minLength": 1,
+                    "title": "City",
+                    "type": "string"
+                  },
+                  "region": {
+                    "minLength": 1,
+                    "title": "Region",
+                    "type": "string"
+                  },
+                  "country": {
+                    "minLength": 1,
+                    "title": "Country",
+                    "type": "string"
+                  },
+                  "postal_code": {
+                    "minLength": 1,
+                    "title": "Postal Code",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "address_line_1",
+                  "city",
+                  "region",
+                  "country",
+                  "postal_code"
+                ],
+                "title": "Address",
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/orders/{order_id}/payment-method": {
+      "put": {
+        "operationId": "replaceOrderPaymentMethod",
+        "summary": "Replace an order payment method",
+        "description": "Replace the payment method associated with one order.",
+        "x-api-mutates-state": true,
+        "x-api-idempotency": "not_guaranteed",
+        "x-api-automatic-retries": "forbidden",
+        "x-api-consistency": "strong",
+        "x-api-pagination": "none",
+        "x-api-request-body-max-bytes": 1048576,
+        "x-api-response-body-max-bytes": 4194304,
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "order_id": {
+                      "title": "Order Id",
+                      "type": "string"
+                    },
+                    "payments": {
+                      "items": {
+                        "$ref": "#/components/schemas/OrderPayment"
+                      },
+                      "title": "Payments",
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "order_id",
+                    "payments"
+                  ],
+                  "title": "OrderPaymentMethodResult",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request does not match the operation schema",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested resource was not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "HTTP method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The resource's current state prevents the operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "JSON request query and body exceed the byte limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request violates a business constraint",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The service produced an invalid or oversized JSON response body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "payment_method_id": {
+                    "minLength": 1,
+                    "title": "Payment Method Id",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "payment_method_id"
+                ],
+                "title": "PaymentMethodRequest",
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/orders/{order_id}/cancellations": {
+      "post": {
+        "operationId": "createOrderCancellation",
+        "summary": "Cancel an order",
+        "description": "Create a cancellation for one order.",
+        "x-api-mutates-state": true,
+        "x-api-idempotency": "not_guaranteed",
+        "x-api-automatic-retries": "forbidden",
+        "x-api-consistency": "strong",
+        "x-api-pagination": "none",
+        "x-api-request-body-max-bytes": 1048576,
+        "x-api-response-body-max-bytes": 4194304,
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "order_id": {
+                      "title": "Order Id",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "cancelled",
+                      "title": "Status",
+                      "type": "string"
+                    },
+                    "cancellation": {
+                      "$ref": "#/components/schemas/OrderCancellation"
+                    },
+                    "payments": {
+                      "items": {
+                        "$ref": "#/components/schemas/OrderPayment"
+                      },
+                      "title": "Payments",
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "order_id",
+                    "status",
+                    "cancellation",
+                    "payments"
+                  ],
+                  "title": "OrderCancellationResult",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request does not match the operation schema",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested resource was not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "HTTP method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The resource's current state prevents the operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "JSON request query and body exceed the byte limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request violates a business constraint",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The service produced an invalid or oversized JSON response body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "reason": {
+                    "minLength": 1,
+                    "title": "Reason",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "reason"
+                ],
+                "title": "CancellationRequest",
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/orders/{order_id}/item-modifications": {
+      "post": {
+        "operationId": "createOrderItemModification",
+        "summary": "Modify order items",
+        "description": "Replace selected items in one order.",
+        "x-api-mutates-state": true,
+        "x-api-idempotency": "not_guaranteed",
+        "x-api-automatic-retries": "forbidden",
+        "x-api-consistency": "strong",
+        "x-api-pagination": "none",
+        "x-api-request-body-max-bytes": 1048576,
+        "x-api-response-body-max-bytes": 4194304,
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "order_id": {
+                      "title": "Order Id",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "pending (items modified)",
+                      "title": "Status",
+                      "type": "string"
+                    },
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/OrderItem"
+                      },
+                      "title": "Items",
+                      "type": "array"
+                    },
+                    "payments": {
+                      "items": {
+                        "$ref": "#/components/schemas/OrderPayment"
+                      },
+                      "title": "Payments",
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "order_id",
+                    "status",
+                    "items",
+                    "payments"
+                  ],
+                  "title": "OrderItemModificationResult",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request does not match the operation schema",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested resource was not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "HTTP method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The resource's current state prevents the operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "JSON request query and body exceed the byte limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request violates a business constraint",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The service produced an invalid or oversized JSON response body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "replacements": {
+                    "items": {
+                      "$ref": "#/components/schemas/ItemReplacement"
+                    },
+                    "minItems": 1,
+                    "title": "Replacements",
+                    "type": "array"
+                  },
+                  "payment_method_id": {
+                    "minLength": 1,
+                    "title": "Payment Method Id",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "replacements",
+                  "payment_method_id"
+                ],
+                "title": "ItemReplacementRequest",
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/orders/{order_id}/returns": {
+      "post": {
+        "operationId": "createOrderReturn",
+        "summary": "Return order items",
+        "description": "Create a return request for selected items in one order.",
+        "x-api-mutates-state": true,
+        "x-api-idempotency": "not_guaranteed",
+        "x-api-automatic-retries": "forbidden",
+        "x-api-consistency": "strong",
+        "x-api-pagination": "none",
+        "x-api-request-body-max-bytes": 1048576,
+        "x-api-response-body-max-bytes": 4194304,
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "order_id": {
+                      "title": "Order Id",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "return requested",
+                      "title": "Status",
+                      "type": "string"
+                    },
+                    "return_request": {
+                      "$ref": "#/components/schemas/OrderReturn"
+                    }
+                  },
+                  "required": [
+                    "order_id",
+                    "status",
+                    "return_request"
+                  ],
+                  "title": "OrderReturnResult",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request does not match the operation schema",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested resource was not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "HTTP method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The resource's current state prevents the operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "JSON request query and body exceed the byte limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request violates a business constraint",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The service produced an invalid or oversized JSON response body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "item_ids": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "title": "Item Ids",
+                    "type": "array"
+                  },
+                  "refund_payment_method_id": {
+                    "minLength": 1,
+                    "title": "Refund Payment Method Id",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "item_ids",
+                  "refund_payment_method_id"
+                ],
+                "title": "ReturnRequest",
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/orders/{order_id}/exchanges": {
+      "post": {
+        "operationId": "createOrderExchange",
+        "summary": "Exchange order items",
+        "description": "Create an exchange request with replacements for selected items in one order.",
+        "x-api-mutates-state": true,
+        "x-api-idempotency": "not_guaranteed",
+        "x-api-automatic-retries": "forbidden",
+        "x-api-consistency": "strong",
+        "x-api-pagination": "none",
+        "x-api-request-body-max-bytes": 1048576,
+        "x-api-response-body-max-bytes": 4194304,
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "order_id": {
+                      "title": "Order Id",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "exchange requested",
+                      "title": "Status",
+                      "type": "string"
+                    },
+                    "exchange": {
+                      "$ref": "#/components/schemas/OrderExchange"
+                    }
+                  },
+                  "required": [
+                    "order_id",
+                    "status",
+                    "exchange"
+                  ],
+                  "title": "OrderExchangeResult",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request does not match the operation schema",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested resource was not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "HTTP method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The resource's current state prevents the operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "JSON request query and body exceed the byte limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request violates a business constraint",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The service produced an invalid or oversized JSON response body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "replacements": {
+                    "items": {
+                      "$ref": "#/components/schemas/ItemReplacement"
+                    },
+                    "minItems": 1,
+                    "title": "Replacements",
+                    "type": "array"
+                  },
+                  "payment_method_id": {
+                    "minLength": 1,
+                    "title": "Payment Method Id",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "replacements",
+                  "payment_method_id"
+                ],
+                "title": "ItemReplacementRequest",
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/conversations/{conversation_id}/transfers": {
+      "post": {
+        "operationId": "createConversationTransfer",
+        "summary": "Transfer a conversation to a human agent",
+        "description": "Create a live transfer of one active conversation to a human support agent. The conversation transcript and routing context are attached automatically.",
+        "x-api-mutates-state": true,
+        "x-api-idempotency": "not_guaranteed",
+        "x-api-automatic-retries": "forbidden",
+        "x-api-consistency": "strong",
+        "x-api-pagination": "none",
+        "x-api-request-body-max-bytes": 1048576,
+        "x-api-response-body-max-bytes": 4194304,
+        "responses": {
+          "201": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "Accepted live-transfer resource.",
+                  "properties": {
+                    "transfer_id": {
+                      "minLength": 1,
+                      "title": "Transfer Id",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "accepted",
+                      "title": "Status",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "transfer_id",
+                    "status"
+                  ],
+                  "title": "ConversationTransferReceipt",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request does not match the operation schema",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested resource was not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "HTTP method not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The resource's current state prevents the operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "JSON request query and body exceed the byte limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request violates a business constraint",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The service produced an invalid or oversized JSON response body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "description": "Request to transfer an active conversation to a human agent.",
+                "properties": {
+                  "summary": {
+                    "minLength": 1,
+                    "title": "Summary",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "summary"
+                ],
+                "title": "ConversationTransferRequest",
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "APIError": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "details": {}
+            }
+          }
+        }
+      },
+      "Address": {
+        "additionalProperties": false,
+        "properties": {
+          "address_line_1": {
+            "minLength": 1,
+            "title": "Address Line 1",
+            "type": "string"
+          },
+          "address_line_2": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Address Line 2"
+          },
+          "city": {
+            "minLength": 1,
+            "title": "City",
+            "type": "string"
+          },
+          "region": {
+            "minLength": 1,
+            "title": "Region",
+            "type": "string"
+          },
+          "country": {
+            "minLength": 1,
+            "title": "Country",
+            "type": "string"
+          },
+          "postal_code": {
+            "minLength": 1,
+            "title": "Postal Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "address_line_1",
+          "city",
+          "region",
+          "country",
+          "postal_code"
+        ],
+        "title": "Address",
+        "type": "object"
+      },
+      "CreditCard": {
+        "additionalProperties": false,
+        "properties": {
+          "source": {
+            "const": "credit_card",
+            "title": "Source",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "brand": {
+            "title": "Brand",
+            "type": "string"
+          },
+          "last_four": {
+            "title": "Last Four",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "id",
+          "brand",
+          "last_four"
+        ],
+        "title": "CreditCard",
+        "type": "object"
+      },
+      "CustomerName": {
+        "additionalProperties": false,
+        "properties": {
+          "first_name": {
+            "title": "First Name",
+            "type": "string"
+          },
+          "last_name": {
+            "title": "Last Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "first_name",
+          "last_name"
+        ],
+        "title": "CustomerName",
+        "type": "object"
+      },
+      "GiftCard": {
+        "additionalProperties": false,
+        "properties": {
+          "source": {
+            "const": "gift_card",
+            "title": "Source",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "balance": {
+            "title": "Balance",
+            "type": "number",
+            "description": "Normal response: JSON number. A numeric string is not the declared type; report observed deviations. Unknown is not zero."
+          }
+        },
+        "required": [
+          "source",
+          "id",
+          "balance"
+        ],
+        "title": "GiftCard",
+        "type": "object"
+      },
+      "Paypal": {
+        "additionalProperties": false,
+        "properties": {
+          "source": {
+            "const": "paypal",
+            "title": "Source",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "id"
+        ],
+        "title": "Paypal",
+        "type": "object"
+      },
+      "ProductSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "product_id": {
+            "title": "Product Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "product_id",
+          "name"
+        ],
+        "title": "ProductSummary",
+        "type": "object"
+      },
+      "CatalogItem": {
+        "additionalProperties": false,
+        "properties": {
+          "item_id": {
+            "title": "Item Id",
+            "type": "string"
+          },
+          "options": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Options",
+            "type": "object"
+          },
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "price": {
+            "title": "Price",
+            "type": "number"
+          }
+        },
+        "required": [
+          "item_id",
+          "options",
+          "available",
+          "price"
+        ],
+        "title": "CatalogItem",
+        "type": "object"
+      },
+      "ItemReplacement": {
+        "additionalProperties": false,
+        "properties": {
+          "existing_item_id": {
+            "minLength": 1,
+            "title": "Existing Item Id",
+            "type": "string"
+          },
+          "replacement_item_id": {
+            "minLength": 1,
+            "title": "Replacement Item Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "existing_item_id",
+          "replacement_item_id"
+        ],
+        "title": "ItemReplacement",
+        "type": "object",
+        "description": "One occurrence represents one unit. Repeated existing_item_id values preserve quantity; do not deduplicate. No unique order-line selector is exposed."
+      },
+      "OrderCancellation": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "enum": [
+              "no longer needed",
+              "ordered by mistake"
+            ],
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "OrderCancellation",
+        "type": "object"
+      },
+      "OrderExchange": {
+        "additionalProperties": false,
+        "properties": {
+          "replacements": {
+            "items": {
+              "$ref": "#/components/schemas/ItemReplacement"
+            },
+            "title": "Replacements",
+            "type": "array"
+          },
+          "payment_method_id": {
+            "title": "Payment Method Id",
+            "type": "string"
+          },
+          "price_difference": {
+            "title": "Price Difference",
+            "type": "number"
+          }
+        },
+        "required": [
+          "replacements",
+          "payment_method_id",
+          "price_difference"
+        ],
+        "title": "OrderExchange",
+        "type": "object"
+      },
+      "OrderFulfillment": {
+        "additionalProperties": false,
+        "properties": {
+          "tracking_id": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tracking Id",
+            "type": "array"
+          },
+          "item_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Item Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tracking_id",
+          "item_ids"
+        ],
+        "title": "OrderFulfillment",
+        "type": "object"
+      },
+      "OrderItem": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "product_id": {
+            "title": "Product Id",
+            "type": "string"
+          },
+          "item_id": {
+            "title": "Item Id",
+            "type": "string"
+          },
+          "price": {
+            "title": "Price",
+            "type": "number"
+          },
+          "options": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Options",
+            "type": "object"
+          }
+        },
+        "required": [
+          "name",
+          "product_id",
+          "item_id",
+          "price",
+          "options"
+        ],
+        "title": "OrderItem",
+        "type": "object"
+      },
+      "OrderPayment": {
+        "additionalProperties": false,
+        "properties": {
+          "transaction_type": {
+            "enum": [
+              "payment",
+              "refund"
+            ],
+            "title": "Transaction Type",
+            "type": "string"
+          },
+          "amount": {
+            "title": "Amount",
+            "type": "number"
+          },
+          "payment_method_id": {
+            "title": "Payment Method Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "transaction_type",
+          "amount",
+          "payment_method_id"
+        ],
+        "title": "OrderPayment",
+        "type": "object"
+      },
+      "OrderReturn": {
+        "additionalProperties": false,
+        "properties": {
+          "item_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Item Ids",
+            "type": "array"
+          },
+          "refund_payment_method_id": {
+            "title": "Refund Payment Method Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_ids",
+          "refund_payment_method_id"
+        ],
+        "title": "OrderReturn",
+        "type": "object"
+      }
+    }
+  },
+  "x-classroom-mode": "predeployed-capabilities-v1",
+  "x-enabled-capabilities": [
+    "retail_partial_return_v1"
+  ],
+  "x-classroom-contract-notes": "INTERFACE-CLARIFICATIONS.md (project root), contract-notes-v1"
+}

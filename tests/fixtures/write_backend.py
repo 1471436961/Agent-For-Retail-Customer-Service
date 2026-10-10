@@ -12,6 +12,8 @@ class WriteBackend(SyntheticBackend):
         self.calls.append(deepcopy(request))
         parts = [unquote(part) for part in request["path"].split("/")]
         body = request["body"]
+        if parts[2] == "conversations" and parts[4] == "transfers":
+            return self.response({"transfer_id": "synthetic-transfer", "status": "accepted"}, 201)
         if parts[2] == "customers" and parts[4] == "default-shipping-address":
             customer = next(c for c in self.records["customers"] if c["customer_id"] == parts[3])
             customer["default_shipping_address"] = deepcopy(body)

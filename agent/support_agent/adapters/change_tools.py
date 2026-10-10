@@ -8,12 +8,15 @@ from support_agent.domain.changes import prepare
 from support_agent.domain.identity import ReadError
 from support_agent.domain.money import calculate_values
 from support_agent.adapters.write_api import write_once
+from support_agent.adapters.conversation_api import transfer_once
+from support_agent.domain.plans import order_requests
 
 PREPARATION_ACTION_NAMES = ("compare_variants", "calculate", "prepare_change")
 REVIEW_ACTION_NAMES = ("review_change", "invalidate_change")
+PLAN_ACTION_NAMES = ("plan_changes", "prepare_plan_step", "abandon_plan", "get_service_status", "inspect_change_result", "transfer_to_human")
 EXECUTE_ACTIONS = {"execute_default_address": "default_address", "execute_order_address": "order_address", "execute_cancellation": "cancel",
                    "execute_payment": "payment", "execute_item_modification": "modify_items", "execute_return": "return", "execute_exchange": "exchange"}
-ACTION_NAMES = (*READ_ACTION_NAMES, *PREPARATION_ACTION_NAMES, *REVIEW_ACTION_NAMES, *EXECUTE_ACTIONS)
+ACTION_NAMES = (*READ_ACTION_NAMES, *PREPARATION_ACTION_NAMES, *REVIEW_ACTION_NAMES, *PLAN_ACTION_NAMES, *EXECUTE_ACTIONS)
 
 
 class ChangeTools(CustomerTools):
@@ -21,6 +24,10 @@ class ChangeTools(CustomerTools):
         super().__init__(client_api)
         self._proposals = {}
         self._opening_gift_ids = None
+        self._plans = {}
+        self._human_requested = False
+        self._transfer_outcome = None
+        self._inspections = {}
 
     def _sync_session(self):
         previous = self._conversation_id
@@ -28,6 +35,14 @@ class ChangeTools(CustomerTools):
         if previous != self._conversation_id:
             self._proposals = {}
             self._opening_gift_ids = None
+            self._plans = {}
+            self._human_requested = False
+            self._transfer_outcome = None
+            self._inspections = {}
+
+    def _assert_service_active(self):
+        if self._transfer_outcome and self._transfer_outcome["state"] in {"accepted", "unknown"}:
+            raise ReadError("human_handoff_terminal_no_customer_api")
 
     def _profile(self):
         profile = super()._profile()
@@ -124,6 +139,8 @@ class ChangeTools(CustomerTools):
     def _execute(self, proposal_id, kind):
         with self._lock:
             proposal = self._proposal(proposal_id)
+            if self._human_requested:
+                raise ReadError("human_requested_business_writes_paused")
             if proposal["facts"]["kind"] != kind:
                 raise ReadError("wrong_execution_kind")
             if proposal["state"] in {"attempted", "completed", "accepted", "failed", "unknown"}:
@@ -140,6 +157,10 @@ class ChangeTools(CustomerTools):
             outcome = write_once(self.client_api, proposal["facts"])
             proposal["outcome"] = {"proposal_id": proposal_id, **outcome}
             proposal["state"] = outcome["state"]
+            if "plan_id" in proposal:
+                step = self._plans[proposal["plan_id"]]["steps"][proposal["step_index"]]
+                step["state"] = outcome["state"]
+                step["outcome"] = deepcopy(proposal["outcome"])
             return deepcopy(proposal["outcome"])
 
     @is_tool(ToolType.WRITE)
@@ -208,3 +229,123 @@ class ChangeTools(CustomerTools):
         Never append, change the confirmed destination or infer hidden line IDs.
         """
         return self._execute(proposal_id, "exchange")
+
+    @is_tool(ToolType.READ)
+    def plan_changes(self, requests: list[dict]) -> dict:
+        """Build a serial plan from already clarified explicit customer requests.
+
+        Each entry is {kind, parameters}. Per-order address/payment precede
+        one-time items. Incompatible cancellation/return/exchange combinations
+        require clarification, never silent omission or expansion. Every step is
+        separately prepared, actually reviewed and approved before execution.
+        """
+        with self._lock:
+            self._customer_id()
+            ordered = order_requests(requests)
+            # Validate all currently known qualifications without creating proposals.
+            for row in ordered:
+                prepare(self, row["kind"], row["parameters"])
+            identifier = f"plan-{len(self._plans) + 1}"
+            plan = {"plan_id": identifier, "steps": [{**deepcopy(row), "state": "pending"} for row in ordered]}
+            self._plans[identifier] = plan
+            return deepcopy(plan)
+
+    @is_tool(ToolType.READ)
+    def prepare_plan_step(self, plan_id: str) -> dict:
+        """Prepare only the next pending plan step after prior real successes.
+
+        No write or approval is implied. A failed/unknown/paused prior step blocks
+        progression; report partial success and clarify how to proceed.
+        """
+        with self._lock:
+            self._customer_id()
+            if self._human_requested or plan_id not in self._plans:
+                raise ReadError("plan_unavailable_or_human_requested")
+            plan = self._plans[plan_id]
+            for index, step in enumerate(plan["steps"]):
+                if step["state"] in {"completed", "accepted"}:
+                    continue
+                if step["state"] != "pending":
+                    raise ReadError("previous_plan_step_not_complete")
+                p = self.prepare_change(step["kind"], step["parameters"])
+                self._proposals[p["proposal_id"]].update(plan_id=plan_id, step_index=index)
+                step.update(state="prepared", proposal_id=p["proposal_id"])
+                return deepcopy(self._proposals[p["proposal_id"]])
+            raise ReadError("plan_already_complete")
+
+    @is_tool(ToolType.READ)
+    def abandon_plan(self, plan_id: str) -> dict:
+        """Pause unattempted steps on a changed target, withdrawal or human request.
+
+        Keeps completed/accepted/failed/unknown receipts. Never rolls back or
+        repeats completed work; create a new plan only for newly agreed remaining work.
+        """
+        with self._lock:
+            self._sync_session()
+            if plan_id not in self._plans:
+                raise ReadError("unknown_plan")
+            plan = self._plans[plan_id]
+            for step in plan["steps"]:
+                if step["state"] in {"pending", "prepared"}:
+                    step["state"] = "paused"
+                    if "proposal_id" in step:
+                        self.invalidate_change(step["proposal_id"])
+            return deepcopy(plan)
+
+    @is_tool(ToolType.READ)
+    def get_service_status(self) -> dict:
+        """Read session-only plans and actual receipts; no backend request.
+
+        Distinguishes completed, accepted, failed, unknown and pending steps.
+        Report partial success accurately rather than claim an atomic transaction.
+        """
+        with self._lock:
+            self._sync_session()
+            return {"plans": deepcopy(list(self._plans.values())),
+                    "changes": deepcopy(list(self._proposals.values())),
+                    "human_requested": self._human_requested, "handoff": deepcopy(self._transfer_outcome)}
+
+    @is_tool(ToolType.READ)
+    def inspect_change_result(self, proposal_id: str) -> dict:
+        """Inspect with existing customer/order reads, at most three times per proposal.
+
+        Preserves the original write outcome. Seeing a record is evidence, never
+        proof of request identity or permission to retry an unknown write. No new
+        status API, compensation, slicing or write is performed.
+        """
+        with self._lock:
+            proposal = self._proposal(proposal_id)
+            count = self._inspections.get(proposal_id, 0)
+            if count >= 3:
+                raise ReadError("inspection_limit_no_additional_requests")
+            self._inspections[proposal_id] = count + 1
+            facts = proposal["facts"]
+            observed = self.get_owned_order(facts["order_id"]) if facts["order_id"] else self._profile()
+            return {"proposal_id": proposal_id, "state": proposal["state"],
+                    "write_outcome": deepcopy(proposal.get("outcome")), "observed": observed,
+                    "inspection_number": count + 1,
+                    "warning": "Observation does not authorize replay of a write or prove an unknown write outcome."}
+
+    @is_tool(ToolType.GENERIC)
+    def transfer_to_human(self, summary: str, basis: Literal["explicit_request", "unsupported_escalation", "policy_gap"]) -> dict:
+        """Transfer using the trusted active conversation ID, once, no retry.
+
+        The model must establish one of the three bases: explicit customer request
+        (no extra troubleshooting), escalation requested after explaining an
+        unsupported limit, or known facts with a genuinely unaddressed policy.
+        Complexity, anger or latency alone is not a transfer basis. Calling this
+        pauses business writes immediately. accepted/unknown stops customer API.
+        Only accepted permits the exact configured transfer notice.
+        """
+        with self._lock:
+            self._sync_session()
+            if self._transfer_outcome is not None:
+                return deepcopy(self._transfer_outcome)
+            if basis not in {"explicit_request", "unsupported_escalation", "policy_gap"} or not isinstance(summary, str) or not summary.strip():
+                raise ReadError("invalid_transfer_basis_or_summary")
+            self._human_requested = True
+            for proposal in self._proposals.values():
+                if proposal["state"] == "prepared":
+                    proposal["state"] = "paused"
+            self._transfer_outcome = transfer_once(self.client_api, summary)
+            return deepcopy(self._transfer_outcome)

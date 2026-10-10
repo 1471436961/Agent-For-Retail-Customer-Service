@@ -3,6 +3,7 @@
 from typing import Literal
 import json
 from support_agent.adapters.change_tools import EXECUTE_ACTIONS
+from support_agent.adapters.conversation_api import TRANSFER_NOTICE
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from tau2.data_model.message import (
@@ -32,6 +33,7 @@ class SessionState(BaseModel):
     reviewed: dict[str, int] = Field(default_factory=dict)
     review_to_display: dict | None = None
     user_turn: int = 0
+    handoff: str | None = None
 
 
 def initial_state() -> SessionState:
@@ -76,7 +78,7 @@ def receive(state, message):
                 continue
             if not isinstance(body, dict):
                 continue
-            if call["name"] == "prepare_change" and body.get("state") == "prepared":
+            if call["name"] in {"prepare_change", "prepare_plan_step"} and body.get("state") == "prepared":
                 identifier = body.get("proposal_id")
                 if isinstance(identifier, str) and isinstance(body.get("facts"), dict):
                     target = body["facts"].get("order_id")
@@ -93,6 +95,10 @@ def receive(state, message):
                 state.reviewed.pop(call["arguments"].get("proposal_id"), None)
             elif call["name"] in EXECUTE_ACTIONS:
                 state.reviewed.pop(call["arguments"].get("proposal_id"), None)
+            elif call["name"] in {"abandon_plan", "transfer_to_human"}:
+                state.reviewed = {}
+                if call["name"] == "transfer_to_human":
+                    state.handoff = body.get("state")
         state.pending_calls = []
     else:
         raise ProtocolError("Host input must be a user or tool result")
@@ -125,10 +131,12 @@ def record_reply(state, reply, actions):
     if len(calls) > 1 and any(call.name in {"verify_customer", "lookup_customer"} for call in calls):
         # Verification changes toolkit identity; dependent reads wait for its result.
         raise ProtocolError("Verification must use its own tool batch")
-    exclusive = {"prepare_change", "review_change", "invalidate_change", *EXECUTE_ACTIONS}
+    exclusive = {"prepare_change", "review_change", "invalidate_change", "plan_changes", "prepare_plan_step", "abandon_plan", "inspect_change_result", "transfer_to_human", *EXECUTE_ACTIONS}
     if len(calls) > 1 and any(call.name in exclusive for call in calls):
         raise ProtocolError("State-changing or dependent actions require a single-call batch")
     for call in calls:
+        if state.handoff in {"accepted", "unknown"}:
+            raise ProtocolError("Terminal handoff forbids further tool calls")
         if call.name in EXECUTE_ACTIONS:
             identifier = call.arguments.get("proposal_id")
             proposal = state.proposals.get(identifier)
@@ -149,6 +157,8 @@ def record_reply(state, reply, actions):
             raise ProtocolError("Review facts must actually be displayed")
         state.reviewed = {identifier: state.user_turn}
         state.review_to_display = None
+    if state.handoff == "accepted" and reply.content != TRANSFER_NOTICE:
+        raise ProtocolError("Accepted handoff requires exact notice")
     store(state, reply)
 
 

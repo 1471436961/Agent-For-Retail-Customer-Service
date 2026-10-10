@@ -36,9 +36,13 @@ class CustomerTools(ClientAPIToolKitBase):
 
     def _customer_id(self):
         self._sync_session()
+        self._assert_service_active()
         if self._identity.customer_id is None:
             raise ReadError("identity_required")
         return self._identity.customer_id
+
+    def _assert_service_active(self):
+        """Extension hook for terminal handoff, without changing identity policy."""
 
     def _profile(self):
         return read_customer(self.client_api, self._customer_id())
@@ -57,6 +61,7 @@ class CustomerTools(ClientAPIToolKitBase):
             raise ReadError("invalid_resource_identifier")
         with self._lock:
             self._sync_session()
+            self._assert_service_active()
             if (self._identity.customer_id is not None and claimed_customer_id and
                     claimed_customer_id != self._identity.customer_id):
                 raise verification_failed()

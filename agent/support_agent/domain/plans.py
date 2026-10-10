@@ -1,6 +1,7 @@
 """Order explicit changes by real dependencies, not by customer wording."""
 from copy import deepcopy
 from support_agent.domain.changes import KINDS, require
+from support_agent.domain.identity import resource_id
 
 
 def order_requests(requests):
@@ -8,7 +9,7 @@ def order_requests(requests):
     groups = {}
     for row in requests:
         require(isinstance(row, dict) and set(row) == {"kind", "parameters"} and row["kind"] in KINDS and isinstance(row["parameters"], dict), "invalid_plan_step")
-        target = row["parameters"].get("order_id") if row["kind"] != "default_address" else None
+        target = resource_id(row["parameters"].get("order_id")) if row["kind"] != "default_address" else None
         groups.setdefault(target, []).append(deepcopy(row))
     ordered = []
     rank = {"default_address": 0, "order_address": 0, "payment": 1, "modify_items": 2, "cancel": 0, "return": 0, "exchange": 0}

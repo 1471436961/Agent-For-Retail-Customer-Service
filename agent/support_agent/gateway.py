@@ -1,7 +1,9 @@
 """Adapt the injected tau2 gateway; never leave its model allowlist."""
 
 import json
+from copy import deepcopy
 from dataclasses import dataclass
+from itertools import product
 
 from tau2.data_model.message import MultiToolMessage, ToolMessage
 from support_agent.state import decode
@@ -28,22 +30,29 @@ class GatewayAdapter:
     def __init__(self, context):
         self.gateway = context.model_gateway
         self.limits = AgentLimits.from_runtime(context.runtime_config)
-        self.model = self.gateway.available_models[0]
         self.actions = context.action_interface.select(ACTION_NAMES)
         self.actions_by_name = {action.name: action for action in self.actions}
         if any(action.info.get("tool_type") not in {"read", "write", "generic"} for action in self.actions):
             raise ValueError("Unsupported action type")
-        configs = [config for config in self.gateway.models if config.model == self.model]
-        if len(configs) != 1:
-            raise ValueError("Model configuration is ambiguous; explicit configuration required")
-        self.options = {}
-        for name, value in configs[0].constrained_args.items():
-            if isinstance(value, dict) and set(value) == {"one_of"}:
-                if not value["one_of"]:
-                    raise ValueError("Empty model option choice")
-                self.options[name] = value["one_of"][0]
-        # Pinned values returned here are deliberately NOT sent by the Agent.
-        self.gateway.validate_request(self.model, self.options)
+        self.model, self.options = self._select_configuration()
+
+    def _select_configuration(self):
+        # Preflight only: enumerate teacher-allowed choices, never generate a
+        # response or pass pinned values. The gateway determines uniqueness.
+        for model in self.gateway.available_models:
+            for config in self.gateway.models:
+                if config.model != model:
+                    continue
+                choices = {name: value["one_of"] for name, value in config.constrained_args.items()
+                           if isinstance(value, dict) and set(value) == {"one_of"}}
+                for selected in product(*choices.values()):
+                    options = deepcopy(dict(zip(choices, selected)))
+                    try:
+                        self.gateway.validate_request(model, options)
+                    except ValueError:
+                        continue
+                    return model, options
+        raise ValueError("Allowed model configurations are ambiguous or have no valid explicit choices")
 
     def generate(self, messages):
         return self.gateway.generate(
@@ -68,9 +77,10 @@ class GatewayAdapter:
         for raw in history:
             message = decode(raw)
             if isinstance(message, MultiToolMessage):
-                message = message.model_copy(update={
-                    "tool_messages": [project_result(result) for result in message.tool_messages],
-                })
+                # The host batches results; tau2's provider conversion consumes
+                # individual ToolMessages. Retain the raw batch only in state.
+                messages.extend(project_result(result) for result in message.tool_messages)
+                continue
             elif isinstance(message, ToolMessage):
                 message = project_result(message)
             messages.append(message)

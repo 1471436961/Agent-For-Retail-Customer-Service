@@ -39,7 +39,8 @@ def prepare(kit, kind, params):
         body = address.model_dump(exclude_unset=True)
         require(all(str(body[field]).strip() for field in ("address_line_1", "city", "region", "country", "postal_code")), "incomplete_or_invalid_address")
     elif kind == "cancel":
-        require(params.get("reason") in {"no longer needed", "ordered by mistake"}, "unsupported_cancellation_reason")
+        require(isinstance(params.get("reason"), str) and
+                params["reason"] in {"no longer needed", "ordered by mistake"}, "unsupported_cancellation_reason")
         body = {"reason": params["reason"]}
         # Keep every original charge separate; never refund the net payment sum.
         calculations = [{"operation": "original_charge", "inputs": [p["amount"]],

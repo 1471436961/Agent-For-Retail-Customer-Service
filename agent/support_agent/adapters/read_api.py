@@ -1,6 +1,9 @@
 """Six explicit read operations through the injected ClientAPI only."""
 
 from copy import deepcopy
+from decimal import Decimal, InvalidOperation
+import json
+import math
 from urllib.parse import quote
 
 from pydantic import ValidationError
@@ -11,6 +14,38 @@ _ERROR_CODES = {
     "invalid_body", "resource_not_found", "resource_conflict", "business_rule_violation",
     "request_too_large", "response_too_large", "invalid_response_body", "method_not_allowed",
 }
+
+
+def _customer_balance_compatibility(body):
+    """Normalize only the gift-card balance discrepancy observed in a t1 trace.
+
+    Other field types still use the exact normal OpenAPI. Accepted strings are
+    finite JSON numbers; invalid values never become zero. Keep a bounded warning
+    on the derived tool record, without modifying the backend response.
+    """
+    result = deepcopy(body)
+    warnings = []
+    methods = result.get("payment_methods")
+    if not isinstance(methods, list):
+        return result, warnings
+    for index, method in enumerate(methods):
+        if not isinstance(method, dict) or method.get("source") != "gift_card":
+            continue
+        raw = method.get("balance")
+        if not isinstance(raw, str):
+            continue
+        if not raw or len(raw) > 128 or raw != raw.strip():
+            raise ValueError("Invalid numeric balance string")
+        number = json.loads(raw, parse_float=Decimal, parse_int=Decimal)
+        if not isinstance(number, Decimal) or not number.is_finite():
+            raise ValueError("Invalid numeric balance string")
+        value = float(number)
+        if not math.isfinite(value) or (number != 0 and value == 0):
+            raise ValueError("Unrepresentable balance")
+        method["balance"] = value
+        warnings.append({"code": "numeric_string_balance", "path": f"payment_methods[{index}].balance",
+                         "original_value": raw})
+    return result, warnings
 
 
 def _read(client_api, operation, method, path, *, body=None):
@@ -30,11 +65,14 @@ def _read(client_api, operation, method, path, *, body=None):
     try:
         if not isinstance(response.body, dict):
             raise ReadError("invalid_read_response", operation=operation)
-        READ_MODELS[operation].model_validate(response.body)
-    except ValidationError:
+        body, warnings = (_customer_balance_compatibility(response.body)
+                          if operation == "getCustomer" else (deepcopy(response.body), []))
+        READ_MODELS[operation].model_validate(body)
+    except (ValidationError, ValueError, OverflowError, InvalidOperation):
         raise ReadError("invalid_read_response", operation=operation) from None
-    # Validate without rewriting floats/optional fields, list ordering or repeats.
-    return deepcopy(response.body)
+    if warnings:
+        body["response_warnings"] = warnings
+    return body
 
 
 def search_customer(client_api, selector):

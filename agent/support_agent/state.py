@@ -4,6 +4,7 @@ from typing import Literal
 import json
 from support_agent.adapters.change_tools import EXECUTE_ACTIONS
 from support_agent.adapters.conversation_api import TRANSFER_NOTICE
+from support_agent.domain.gateway_failure import GatewayDiagnostic
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from tau2.data_model.message import (
@@ -28,6 +29,7 @@ class SessionState(BaseModel):
     tool_rounds: int = Field(default=0, ge=0)
     request_tool_rounds: int = Field(default=0, ge=0)
     halt_reason: str | None = None
+    gateway_diagnostic: GatewayDiagnostic | None = None
     pending_calls: list[dict] = Field(default_factory=list)
     proposals: dict[str, dict] = Field(default_factory=dict)
     reviewed: dict[str, int] = Field(default_factory=dict)

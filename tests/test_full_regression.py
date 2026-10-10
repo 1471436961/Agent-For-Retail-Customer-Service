@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from copy import deepcopy
 from pathlib import Path
+from unittest.mock import patch
 import test_confirmation as confirmation
 from test_agent_protocol import user
 from fixtures.write_backend import WriteBackend
@@ -142,6 +143,21 @@ class FullRegressionTests(unittest.TestCase):
             report = audit.audit(path)
             self.assertFalse(report["passed"])
             self.assertTrue(any("not read" in error for error in report["errors"]))
+
+    def test_submission_audit_rejects_links_before_reading_source_or_metadata(self):
+        audit = load_audit()
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)
+            (path / "agent.json").write_text('{}')
+            (path / "agent.py").write_text('# synthetic link target')
+            # Simulate Windows links without requiring link-creation privileges.
+            with patch.object(Path, "is_symlink", return_value=True), \
+                    patch.object(Path, "read_bytes", side_effect=AssertionError("Linked files must never be read")):
+                report = audit.audit(path)
+            self.assertFalse(report["passed"])
+            self.assertEqual(report["sha256"], {})
+            self.assertEqual(report["bytes"], 0)
+            self.assertTrue(any("linked/escaping file (not read)" in error for error in report["errors"]))
 
     def test_actual_cancellation_reply_preserves_original_refund_source_and_timing(self):
         p = self.reviewed("cancel", {"order_id": "#P0-PENDING", "reason": "no longer needed"})

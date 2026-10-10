@@ -45,6 +45,41 @@ class ReadScopeTests(unittest.TestCase):
                          {"first_name": "Alex", "last_name": "Li", "postal_code": "10001"})
         self.assertNotIn("email", self.backend.calls[0]["body"])
 
+    def test_observed_balance_string_is_normalized_only_after_verification(self):
+        record = deepcopy(self.customer)
+        gift_index = next(i for i, method in enumerate(record["payment_methods"])
+                          if method["source"] == "gift_card")
+        record["payment_methods"][gift_index]["balance"] = "500.0"
+        self.backend.overrides[("GET", "/v1/customers/p0_customer_a")] = self.backend.response(record)
+        output = self.kit.verify_customer(email="alex.p0@example.test", claimed_customer_id="p0_customer_a")
+        self.assertEqual(output["payment_methods"][gift_index]["balance"], 500.0)
+        self.assertIs(type(output["payment_methods"][gift_index]["balance"]), float)
+        self.assertEqual(output["response_warnings"], [{"code": "numeric_string_balance",
+                         "path": f"payment_methods[{gift_index}].balance", "original_value": "500.0"}])
+        self.assertEqual(record["payment_methods"][gift_index]["balance"], "500.0")
+        self.assertEqual([row["path"] for row in self.backend.calls],
+                         ["/v1/customers/search", "/v1/customers/p0_customer_a"])
+
+    def test_invalid_balance_strings_never_become_zero_or_valid_records(self):
+        for raw in ("", "NaN", "Infinity", "-Infinity", "true", "null", "1_000", " 500.0 ",
+                    "1e1000", "1e-1000", "1e999999999999999999999", "[]", "{}", "not-money"):
+            with self.subTest(raw=raw):
+                record = deepcopy(self.customer)
+                gift = next(m for m in record["payment_methods"] if m["source"] == "gift_card")
+                gift["balance"] = raw
+                self.backend.overrides[("GET", "/v1/customers/p0_customer_a")] = self.backend.response(record)
+                with self.assertRaises(ReadError) as caught:
+                    self.verify()
+                self.assertEqual(caught.exception.code, "invalid_read_response")
+
+    def test_balance_compatibility_cannot_turn_id_mismatch_into_profile_access(self):
+        record = deepcopy(self.customer)
+        next(m for m in record["payment_methods"] if m["source"] == "gift_card")["balance"] = "500.0"
+        self.backend.overrides[("GET", "/v1/customers/p0_customer_a")] = self.backend.response(record)
+        with self.assertRaises(ReadError):
+            self.kit.verify_customer(email="alex.p0@example.test", claimed_customer_id="p0_customer_b")
+        self.assertEqual([row["path"] for row in self.backend.calls], ["/v1/customers/search"])
+
     def test_incomplete_mixed_or_id_only_selectors_never_contact_backend(self):
         for arguments in ({}, {"claimed_customer_id": "p0_customer_a"}, {"first_name": "Alex"},
                           {"first_name": "Alex", "last_name": "Li"}, {"email": "   "},

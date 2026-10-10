@@ -1,0 +1,156 @@
+"""Exercise tau2's real wire conversion; only the final provider is simulated.
+
+No real model comprehension or remote evaluation is claimed by these tests.
+"""
+
+import json
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "agent"))
+
+from agent import create_agent
+from tools import Tools
+from fixtures.p2_backend import SyntheticBackend
+from litellm import ModelResponse
+from tau2.hyper.agent_context import activate_agent_context, build_agent_context
+from tau2.hyper.client_api import ClientAPI, ClientAPIContext
+from tau2.data_model.message import MultiToolMessage, ToolMessage, UserMessage
+
+
+def completion(*, arguments=None, content=None, calls=None):
+    message = {"role": "assistant", "content": content}
+    if arguments is not None:
+        calls = [{"id": "wire-verify", "type": "function", "function": {
+            "name": "verify_customer", "arguments": json.dumps(arguments)}}]
+    if calls is not None:
+        message["tool_calls"] = calls
+    return ModelResponse(model="openai/contract-test-model", choices=[{
+        "finish_reason": "tool_calls" if calls is not None else "stop", "message": message,
+    }], usage={"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20})
+
+
+class GatewayWireTests(unittest.TestCase):
+    def setUp(self):
+        self.backend = SyntheticBackend()
+        self.kit = Tools(ClientAPI(self.backend, context=ClientAPIContext(conversation_id="offline_wire")))
+        context = build_agent_context(domain="retail_plus", tools=list(self.kit.get_tools().values()),
+            resource_root=ROOT / "agent", model_configs=[{
+                "model": "openai/contract-test-model", "constraints": {"max_tokens": 1024}}])
+        with activate_agent_context(context):
+            self.agent = create_agent()
+        self.user = UserMessage(role="user", content="请核对我的账户，邮箱 alex.p0@example.test，编号 p0_customer_a。")
+        self.provider = self.enterContext(patch("tau2.utils.llm_utils.completion"))
+        self.enterContext(patch("tau2.utils.llm_utils.get_response_cost", return_value=0))
+
+    def test_real_wire_host_verification_then_customer_facts(self):
+        customer = self.backend.records["customers"][0]
+        gift = next(m for m in customer["payment_methods"] if m["source"] == "gift_card")
+        gift["balance"] = "500.0"
+        self.provider.side_effect = [completion(arguments={
+            "email": customer["email"], "claimed_customer_id": customer["customer_id"]}),
+            completion(content="The account email is " + customer["email"] + ".")]
+        reply, state = self.agent.generate_next_message(self.user, self.agent.get_init_state())
+        self.assertIsNone(state["halt_reason"])
+        self.assertEqual(self.backend.calls, [])
+        request = self.provider.call_args.kwargs
+        self.assertEqual(request["messages"][-1]["content"], self.user.content)
+        self.assertEqual(request["max_tokens"], 1024)
+        self.assertIn("verify_customer", [t["function"]["name"] for t in request["tools"]])
+        call = reply.tool_calls[0]
+        output = self.kit.get_tools()[call.name](**call.arguments)
+        self.assertEqual([row["path"] for row in self.backend.calls],
+                         ["/v1/customers/search", "/v1/customers/p0_customer_a"])
+        self.assertEqual(next(m for m in output["payment_methods"]
+                              if m["id"] == gift["id"])["balance"], 500.0)
+        reply, state = self.agent.generate_next_message(MultiToolMessage(role="tool", tool_messages=[
+            ToolMessage(role="tool", id=call.id, content=json.dumps(output), error=False)]), state)
+        self.assertIsNone(state["halt_reason"])
+        self.assertIn(customer["email"], reply.content)
+        wire_result = self.provider.call_args.kwargs["messages"][-1]
+        self.assertEqual(wire_result["tool_call_id"], call.id)
+        projected = json.loads(wire_result["content"])
+        self.assertTrue(projected["ok"])
+        self.assertEqual(projected["result"]["response_warnings"][0]["code"], "numeric_string_balance")
+        self.assertEqual(self.provider.call_count, 2)
+
+    def test_model_supplied_wrong_claim_never_reaches_profile(self):
+        self.provider.return_value = completion(arguments={
+            "email": "alex.p0@example.test", "claimed_customer_id": "p0_customer_b"})
+        reply, state = self.agent.generate_next_message(self.user, self.agent.get_init_state())
+        from support_agent.domain.identity import ReadError
+        with self.assertRaises(ReadError):
+            call = reply.tool_calls[0]
+            self.kit.get_tools()[call.name](**call.arguments)
+        self.assertEqual([row["path"] for row in self.backend.calls], ["/v1/customers/search"])
+
+    def test_real_wire_keeps_each_result_in_reversed_multi_tool_batch(self):
+        calls = [{"id": "wire-profile", "type": "function", "function": {
+                    "name": "get_customer_summary", "arguments": "{}"}},
+                 {"id": "wire-catalog", "type": "function", "function": {
+                    "name": "list_products", "arguments": "{}"}}]
+        self.provider.side_effect = [completion(arguments={"email": "alex.p0@example.test"}),
+                                    completion(calls=calls), completion(content="The catalog request failed.")]
+        reply, state = self.agent.generate_next_message(self.user, self.agent.get_init_state())
+        verify_call = reply.tool_calls[0]
+        verified = self.kit.get_tools()[verify_call.name](**verify_call.arguments)
+        reply, state = self.agent.generate_next_message(MultiToolMessage(role="tool", tool_messages=[
+            ToolMessage(role="tool", id=verify_call.id, content=json.dumps(verified))]), state)
+        self.backend.overrides[("GET", "/v1/catalog/products")] = self.backend.missing()
+        from support_agent.domain.identity import ReadError
+        results = []
+        for call in reversed(reply.tool_calls):
+            try:
+                output = self.kit.get_tools()[call.name](**call.arguments)
+                results.append(ToolMessage(role="tool", id=call.id, content=json.dumps(output)))
+            except ReadError as error:
+                results.append(ToolMessage(role="tool", id=call.id, content=str(error), error=True))
+        _, state = self.agent.generate_next_message(MultiToolMessage(role="tool", tool_messages=results), state)
+        self.assertIsNone(state["halt_reason"])
+        wire = self.provider.call_args.kwargs["messages"][-2:]
+        self.assertEqual([m["tool_call_id"] for m in wire], ["wire-catalog", "wire-profile"])
+        self.assertFalse(json.loads(wire[0]["content"])["ok"])
+        self.assertTrue(json.loads(wire[1]["content"])["ok"])
+        raw_batch = state["history"][-2]["tool_messages"]
+        self.assertEqual([m["id"] for m in raw_batch], ["wire-catalog", "wire-profile"])
+        self.assertTrue(raw_batch[0]["error"])
+
+    def test_safe_error_type_survives_state_restore_without_raw_message_or_retry(self):
+        # Inject at the public gateway: no dependency on a provider's logging policy.
+        with patch.object(type(self.agent.context.model_gateway), "generate",
+                          side_effect=TypeError("credential=synthetic-sensitive-payload")) as gateway:
+            reply, state = self.agent.generate_next_message(self.user, self.agent.get_init_state())
+            self.assertEqual(state["gateway_diagnostic"], {
+                "stage": "gateway_generate", "exception_type": "TypeError", "http_status": None})
+            self.assertIn('"exception_type": "TypeError"', reply.content)
+            self.assertNotIn("synthetic-sensitive", reply.content + json.dumps(state))
+            again, restored = self.agent.generate_next_message(self.user, json.loads(json.dumps(state)))
+            self.assertEqual(again.content, reply.content)
+            self.assertEqual(restored["gateway_diagnostic"], state["gateway_diagnostic"])
+            gateway.assert_called_once()
+            self.assertEqual(self.backend.calls, [])
+
+    def test_unknown_exception_names_and_payloads_are_not_retained(self):
+        SensitiveError = type("sensitive-secret-in-class-name", (Exception,), {})
+        with patch.object(type(self.agent.context.model_gateway), "generate",
+                          side_effect=SensitiveError("sensitive-secret-in-body")):
+            reply, state = self.agent.generate_next_message(self.user, self.agent.get_init_state())
+        self.assertEqual(state["gateway_diagnostic"]["exception_type"], "OtherError")
+        self.assertNotIn("sensitive-secret", reply.content + json.dumps(state))
+
+    def test_only_valid_integer_http_status_is_retained(self):
+        for status, expected in ((401, 401), (403, 403), (503, 503), (True, None), ("401", None), (999, None)):
+            with self.subTest(status=status):
+                error = RuntimeError("do-not-copy-provider-response")
+                error.status_code = status
+                with patch.object(type(self.agent.context.model_gateway), "generate", side_effect=error):
+                    reply, state = self.agent.generate_next_message(self.user, self.agent.get_init_state())
+                self.assertEqual(state["gateway_diagnostic"]["http_status"], expected)
+                self.assertNotIn("do-not-copy", reply.content + json.dumps(state))
+
+
+if __name__ == "__main__":
+    unittest.main()

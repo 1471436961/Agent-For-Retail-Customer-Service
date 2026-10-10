@@ -158,7 +158,7 @@ class ProtocolTests(unittest.TestCase):
             results(tool_result("b", '{"email":"must-not-be-a-success"}', error=True), tool_result("a")), state,
         )
         messages = self.provider.call_args.kwargs["messages"]
-        projected = messages[-1].tool_messages
+        projected = messages[-2:]
         self.assertEqual([row.id for row in projected], ["b", "a"])
         self.assertFalse(json.loads(projected[0].content)["ok"])
         self.assertTrue(json.loads(projected[1].content)["ok"])
@@ -169,7 +169,7 @@ class ProtocolTests(unittest.TestCase):
         state = self.pending()
         self.provider.return_value = text_reply("The service result was invalid.")
         _, final = self.agent.generate_next_message(results(tool_result(content="not-json")), state)
-        projected = self.provider.call_args.kwargs["messages"][-1].tool_messages[0]
+        projected = self.provider.call_args.kwargs["messages"][-1]
         self.assertFalse(json.loads(projected.content)["ok"])
         self.assertEqual(final["history"][-2]["tool_messages"][0]["content"], "not-json")
 
@@ -195,7 +195,6 @@ class ProtocolTests(unittest.TestCase):
 
     def test_invalid_assistant_output_cannot_reach_host_execution(self):
         outputs = [
-            AssistantMessage(role="assistant", content="Working", tool_calls=[call()]),
             AssistantMessage(role="assistant", content=" "),
             calls_reply(call("")), calls_reply(call("a"), call("a")),
             calls_reply(call(name="arbitrary_refund")), calls_reply(call(requestor="user")),

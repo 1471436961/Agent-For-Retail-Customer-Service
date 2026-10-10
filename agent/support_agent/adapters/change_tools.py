@@ -328,7 +328,7 @@ class ChangeTools(CustomerTools):
                     "inspection_number": count + 1,
                     "warning": "Observation does not authorize replay of a write or prove an unknown write outcome."}
 
-    @is_tool(ToolType.GENERIC)
+    @is_tool(ToolType.GENERIC, mutates_state=True)
     def transfer_to_human(self, summary: str, basis: Literal["explicit_request", "unsupported_escalation", "policy_gap"]) -> dict:
         """Transfer using the trusted active conversation ID, once, no retry.
 

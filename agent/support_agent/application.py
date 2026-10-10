@@ -3,10 +3,12 @@
 from support_agent.gateway import GatewayAdapter
 from support_agent.prompts import SYSTEM_PROMPT
 from support_agent.state import (
-    ProtocolError, SessionState, initial_state, receive, record_reply, restore_history, review_text, receipt_text,
+    ProtocolError, SessionState, initial_state, receive, record_reply, restore_history, review_text, receipt_text, store,
 )
 from tau2.data_model.message import AssistantMessage, SystemMessage
 from support_agent.adapters.conversation_api import TRANSFER_NOTICE
+from support_agent.domain.gateway_failure import diagnose_gateway_failure
+import json
 
 
 class RetailAgent:
@@ -53,10 +55,15 @@ class RetailAgent:
                 [SystemMessage(role="system", content=SYSTEM_PROMPT, timestamp=None),
                  *self.gateway.project_history(current.history)]
             )
-        except Exception:
-            # Provider exception text may contain secrets; do not copy it.
+        except Exception as error:
+            # Retain only allowlisted type/status, never exception text or args.
+            current.gateway_diagnostic = diagnose_gateway_failure(error)
             return self._stop(current, "gateway_failure")
         try:
+            if isinstance(reply, AssistantMessage) and reply.tool_calls and reply.content:
+                # Provider responses may include narration alongside calls. The
+                # host receives only the calls; no unexecuted claim is displayed.
+                reply = reply.model_copy(update={"content": None})
             if (isinstance(reply, AssistantMessage) and reply.tool_calls and
                     current.request_tool_rounds >= self.gateway.limits.max_tool_rounds):
                 return self._stop(current, "tool_round_limit")
@@ -77,11 +84,20 @@ class RetailAgent:
     @staticmethod
     def _stop(state, reason):
         state.halt_reason = reason
+        diagnostic = ""
+        if reason == "gateway_failure" and state.gateway_diagnostic:
+            diagnostic = " Service diagnostic: " + json.dumps(
+                state.gateway_diagnostic.model_dump(exclude_none=True), sort_keys=True,
+            )
+        facts = receipt_text(state.receipt_facts_to_display) if state.receipt_facts_to_display else ""
         reply = AssistantMessage(
             role="assistant", timestamp=None,
-            content="I cannot continue this request because of a service or protocol limit. "
-                    "I have not confirmed that the requested task is complete. "
-                    f"Reason: {reason}.",
+            content="I cannot continue automated handling because of a service or protocol limit. "
+                    f"Reason: {reason}." + diagnostic + facts,
         )
+        if facts:
+            state.receipt_facts_to_display = []
+        if not state.pending_call_ids:
+            store(state, reply)
         # Preserve pending calls and evidence; do not fabricate tool results.
         return reply, state.model_dump(mode="json")

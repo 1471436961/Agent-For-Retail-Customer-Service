@@ -1,4 +1,4 @@
-"""Platform entry point; application behavior lives in the support_agent package."""
+"""Platform agent factory; each instance owns its conversation state."""
 
 from support_agent.application import CustomerAgent
 

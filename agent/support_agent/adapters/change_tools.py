@@ -7,9 +7,12 @@ from support_agent.domain.catalog import compare
 from support_agent.domain.changes import prepare
 from support_agent.domain.identity import ReadError
 from support_agent.domain.money import calculate_values
+from support_agent.adapters.write_api import write_once
 
 PREPARATION_ACTION_NAMES = ("compare_variants", "calculate", "prepare_change")
-ACTION_NAMES = (*READ_ACTION_NAMES, *PREPARATION_ACTION_NAMES)
+REVIEW_ACTION_NAMES = ("review_change", "invalidate_change")
+EXECUTE_ACTIONS = {"execute_default_address": "default_address", "execute_order_address": "order_address", "execute_cancellation": "cancel"}
+ACTION_NAMES = (*READ_ACTION_NAMES, *PREPARATION_ACTION_NAMES, *REVIEW_ACTION_NAMES, *EXECUTE_ACTIONS)
 
 
 class ChangeTools(CustomerTools):
@@ -85,3 +88,78 @@ class ChangeTools(CustomerTools):
         if identifier not in self._proposals:
             raise ReadError("unknown_proposal")
         return self._proposals[identifier]
+
+    @is_tool(ToolType.READ)
+    def review_change(self, proposal_id: str) -> dict:
+        """Retrieve the exact prepared proposal for the Agent's full recap.
+
+        The Agent displays these fixed facts and asks for confirmation; this tool
+        itself does not imply that a customer has seen or approved the proposal.
+        For one-time item changes the recap also asks if this is the complete list.
+        """
+        with self._lock:
+            proposal = self._proposal(proposal_id)
+            if proposal["state"] != "prepared":
+                raise ReadError("proposal_not_prepared")
+            return {"review": deepcopy(proposal)}
+
+    @is_tool(ToolType.READ)
+    def invalidate_change(self, proposal_id: str) -> dict:
+        """Invalidate an unattempted proposal on correction, pause or withdrawal.
+
+        The model interprets the customer's words. This tool never cancels or
+        rolls back an already attempted/completed backend operation.
+        """
+        with self._lock:
+            proposal = self._proposal(proposal_id)
+            if proposal["state"] == "prepared":
+                proposal["state"] = "withdrawn"
+            return {"proposal_id": proposal_id, "state": proposal["state"]}
+
+    def _execute(self, proposal_id, kind):
+        with self._lock:
+            proposal = self._proposal(proposal_id)
+            if proposal["facts"]["kind"] != kind:
+                raise ReadError("wrong_execution_kind")
+            if proposal["state"] in {"attempted", "completed", "accepted", "failed", "unknown"}:
+                return deepcopy(proposal.get("outcome", {"state": proposal["state"]}))
+            if proposal["state"] != "prepared":
+                raise ReadError("proposal_not_prepared")
+            current = prepare(self, kind, proposal["parameters"])
+            if current != proposal["facts"]:
+                proposal["state"] = "stale"
+                raise ReadError("facts_changed_prepare_and_confirm_again")
+            # Agent protocol independently enforces actual recap + later user
+            # turn. Toolkit has no dialogue channel and cannot prove consent.
+            proposal["state"] = "attempted"
+            outcome = write_once(self.client_api, proposal["facts"])
+            proposal["outcome"] = {"proposal_id": proposal_id, **outcome}
+            proposal["state"] = outcome["state"]
+            return deepcopy(proposal["outcome"])
+
+    @is_tool(ToolType.WRITE)
+    def execute_default_address(self, proposal_id: str) -> dict:
+        """Execute a reviewed, subsequently approved default-address proposal once.
+
+        Does not alter any order address. Never supplies new address fields here.
+        Revalidates current facts; unknown outcomes must not be retried.
+        """
+        return self._execute(proposal_id, "default_address")
+
+    @is_tool(ToolType.WRITE)
+    def execute_order_address(self, proposal_id: str) -> dict:
+        """Execute a reviewed, subsequently approved pending order address once.
+
+        Does not alter the profile default. Rechecks ownership and pending status.
+        """
+        return self._execute(proposal_id, "order_address")
+
+    @is_tool(ToolType.WRITE)
+    def execute_cancellation(self, proposal_id: str) -> dict:
+        """Cancel the reviewed whole pending order once after customer approval.
+
+        Only the prepared permitted reason is sent. Partial cancellation is not
+        supported. Explain original-charge refunds: card/PayPal 3–6 working days,
+        gift card immediately. Failed/unknown is not a successful cancellation.
+        """
+        return self._execute(proposal_id, "cancel")

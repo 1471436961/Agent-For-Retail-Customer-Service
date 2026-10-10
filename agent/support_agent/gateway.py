@@ -31,8 +31,8 @@ class GatewayAdapter:
         self.model = self.gateway.available_models[0]
         self.actions = context.action_interface.select(ACTION_NAMES)
         self.actions_by_name = {action.name: action for action in self.actions}
-        if any(action.info.get("tool_type") != "read" for action in self.actions):
-            raise ValueError("This stage only supports read actions")
+        if any(action.info.get("tool_type") not in {"read", "write", "generic"} for action in self.actions):
+            raise ValueError("Unsupported action type")
         configs = [config for config in self.gateway.models if config.model == self.model]
         if len(configs) != 1:
             raise ValueError("Model configuration is ambiguous; explicit configuration required")

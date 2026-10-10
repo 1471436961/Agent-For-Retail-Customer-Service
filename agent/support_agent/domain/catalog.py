@@ -1,6 +1,5 @@
 """Compare API variants using explicit structured preferences, never user text."""
 import re
-import math
 from support_agent.domain.identity import ReadError
 
 
@@ -9,10 +8,7 @@ def numeric_option(value, unit):
     match = re.fullmatch(r"\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*" + re.escape(unit) + r"\s*", value)
     if not match:
         raise ReadError("uncomparable_catalog_option")
-    result = float(match[1])
-    if not math.isfinite(result):
-        raise ReadError("uncomparable_catalog_option")
-    return result
+    return float(match[1])
 
 
 def compare(product, filters, sort_by, descending, numeric_unit):

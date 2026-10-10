@@ -1,13 +1,13 @@
 """Exact public transfer contract and notice, no model-generated routing ID."""
 from urllib.parse import quote
 from typing import Literal
-from support_agent.adapters.read_models import Record, NonEmpty
+from support_agent.adapters.read_models import Record
 
 TRANSFER_NOTICE = "YOU ARE BEING TRANSFERRED TO A HUMAN AGENT. PLEASE HOLD ON."
 
 
 class TransferReceipt(Record):
-    transfer_id: NonEmpty
+    transfer_id: str
     status: Literal["accepted"]
 
 

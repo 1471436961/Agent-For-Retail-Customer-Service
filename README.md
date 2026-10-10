@@ -1,8 +1,6 @@
 # Enterprise AI Environment 学生项目
 
-当前开发进度：P0–P7 已完成本地实现与离线验收，见 [实施规划](docs/IMPLEMENTATION-PLAN.md)、[P7覆盖](docs/P7-COVERAGE.md) 和 [实际验证记录](docs/P7-VALIDATION.json)。Agent 使用注入的 tau2 gateway 解释对话，工具核对身份/归属、比较商品、计算金额、准备和执行七类经回顾确认的变更，并支持串行计划及人工转接。离线111/111、SDK兼容7/7通过；134项公开需求完成能力映射，实际公开业务案例未运行。P2最后一次t1为0/1，问题待真实运行定位，不能把离线通过当作线上通过。
-
-Windows 离线检查：`.\.venv\Scripts\python.exe scripts/verify-offline.py`。提交包只包含 agent/；运行不读取 E 盘资料或安装依赖。本项目按用户约束不让提交/轮询脚本读取个人凭证，GitHub push 使用 OIDC；不设置 HYPER_LAB_CONFIG。本次 P3–P7 只本地提交，P8 模型/费用及运行范围需另行核对授权。
+当前开发进度：P0/P1/P2已完成，见 [实施规划](docs/IMPLEMENTATION-PLAN.md) 和 [P2记录](docs/P2-IMPLEMENTATION.md)。Agent使用注入的tau2 gateway理解对话，工具执行邮箱/姓名+邮编验证、单客户绑定、本人订单与公共目录读取。当前离线61/61通过；完整变更业务与真实模型能力尚未验证。本地测试请使用仓库 `.venv` 的 Python，不调用真实模型。
 
 **接口补充说明：**先阅读 [INTERFACE-CLARIFICATIONS.md](INTERFACE-CLARIFICATIONS.md)。它统一说明模型网关、用量与预算、历史字段映射、目录查询权限、重复商品数量、订单状态和当前金额舍入行为（U1–U6）。正常 schema 与正式环境鲁棒性测试的区别也在其中；不包含作业答案。
 
@@ -36,7 +34,7 @@ GitHub push 需先在工作台绑定仓库并安装生成的工作流；GitHub �
 4. 在网页绑定自己的 GitHub 仓库、分支、**业务场景**、语言和评测任务。展开“查看本次测试内容与判定依据”确认范围。保存后展开该仓库的“安装完整项目并启用终端评测”，复制对应操作系统的命令；详细命令也在接入包的 `GITHUB-SETUP.md`。全新项目用 `--mode new` 安装完整包，包括 agent/、scripts/、tests/ 和材料；已有 Agent 项目用 `--mode existing` 保护源码。安装器自动放好 `.github/workflows/hyper-lab.yml`，不同内容的同名文件会停止而非覆盖。手动解压的新项目必须复制全部包内容，不能只复制 YAML。停用重复的旧评测工作流。
 5. 推送后，在 GitHub Actions 和平台“运行与反馈”查看同一运行的报告。也可以通过网页或已登录的 `/lab-evaluate` 主动提交。
 
-初始模板只有只读客户查询；本项目已完成的变更能力及验证边界见顶部进度。单元测试通过不代表正式案例通过。
+模板只实现只读客户查询，用于 t1 接入检查。取消、退款、订单处理等 p1/t2 业务仍需你根据材料实现。单元测试通过不代表正式案例通过。
 
 ## 在 git push 的终端直接看评测
 

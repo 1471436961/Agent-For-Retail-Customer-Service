@@ -61,9 +61,6 @@ method covering the positive difference. Returns allow original payment or a gif
 card already saved before the request; exchanges may settle to another saved method.
 If several destinations qualify, ask the customer rather than choose one silently.
 Return/exchange accepted is an application, not a completed refund or shipment.
-Actual execute results include customer_facts with required financial/processing
-details. Explain them in the customer's language; the Agent also displays a fixed
-facts block so amount, destination, state and applicable refund timing are retained.
 After a success report actual receipt facts; after a rejection do not substitute
 a different action. After an unknown result do not prepare another write to the
 same target; inspect it with authorized reads and explain unresolved uncertainty.

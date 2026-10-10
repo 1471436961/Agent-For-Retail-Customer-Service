@@ -24,8 +24,6 @@ def prepare(kit, kind, params):
         "exchange": {"order_id", "replacements", "payment_method_id", "preserve_options", "specific_instance"},
     }[kind]
     require(not (set(params) - allowed), "unexpected_change_parameter")
-    if "specific_instance" in params:
-        require(type(params["specific_instance"]) is bool, "invalid_instance_selection")
     profile = kit._profile()
     order = kit.get_owned_order(resource_id(params.get("order_id", ""))) if kind != "default_address" else None
     if order:
@@ -82,7 +80,7 @@ def prepare(kit, kind, params):
             target = next((i for i in product["items"] if i["item_id"] == row["replacement_item_id"]), None)
             require(target is not None and target["available"], "replacement_not_same_product_or_unavailable")
             require(target["item_id"] != old["item_id"], "unchanged_item")
-            preserve = params.get("preserve_options")
+            preserve = params.get("preserve_options", [])
             require(isinstance(preserve, list) and all(isinstance(k, str) for k in preserve), "invalid_preserved_options")
             require(all(k in old["options"] and target["options"].get(k) == old["options"][k] for k in preserve), "required_option_changed")
             values.extend([target["price"], old["price"]])

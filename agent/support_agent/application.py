@@ -3,14 +3,14 @@
 from support_agent.gateway import GatewayAdapter
 from support_agent.prompts import SYSTEM_PROMPT
 from support_agent.state import (
-    ProtocolError, SessionState, initial_state, receive, record_reply, restore_history, review_text, receipt_text,
+    ProtocolError, SessionState, initial_state, receive, record_reply, restore_history, review_text,
 )
 from tau2.data_model.message import AssistantMessage, SystemMessage
 from support_agent.adapters.conversation_api import TRANSFER_NOTICE
 
 
 class RetailAgent:
-    """Host-mediated retail Agent; user semantics are delegated to LLM."""
+    """P1 read-only protocol skeleton; user semantics are delegated to LLM."""
 
     def __init__(self, context):
         if context.runtime_config.get("domain") != "retail_plus":
@@ -39,10 +39,7 @@ class RetailAgent:
         if current.handoff in {"accepted", "unknown"}:
             return self._handoff_reply(current)
         if current.review_to_display:
-            content = review_text(current.review_to_display)
-            if current.receipt_facts_to_display:
-                content += receipt_text(current.receipt_facts_to_display)
-            reply = AssistantMessage(role="assistant", content=content, timestamp=None)
+            reply = AssistantMessage(role="assistant", content=review_text(current.review_to_display), timestamp=None)
             record_reply(current, reply, self.gateway.actions_by_name)
             return reply, current.model_dump(mode="json")
         if current.model_calls >= self.gateway.limits.max_model_calls:
@@ -60,8 +57,6 @@ class RetailAgent:
             if (isinstance(reply, AssistantMessage) and reply.tool_calls and
                     current.request_tool_rounds >= self.gateway.limits.max_tool_rounds):
                 return self._stop(current, "tool_round_limit")
-            if isinstance(reply, AssistantMessage) and not reply.tool_calls and reply.content and current.receipt_facts_to_display:
-                reply = reply.model_copy(update={"content": reply.content + receipt_text(current.receipt_facts_to_display)})
             record_reply(current, reply, self.gateway.actions_by_name)
         except ProtocolError:
             return self._stop(current, "invalid_model_reply")
@@ -80,8 +75,7 @@ class RetailAgent:
         reply = AssistantMessage(
             role="assistant", timestamp=None,
             content="I cannot continue this request because of a service or protocol limit. "
-                    "I have not confirmed that the requested task is complete. "
-                    f"Reason: {reason}.",
+                    "I have not confirmed that the requested task is complete.",
         )
         # Preserve pending calls and evidence; do not fabricate tool results.
         return reply, state.model_dump(mode="json")

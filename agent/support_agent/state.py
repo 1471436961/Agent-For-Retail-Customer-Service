@@ -34,7 +34,6 @@ class SessionState(BaseModel):
     review_to_display: dict | None = None
     user_turn: int = 0
     handoff: str | None = None
-    receipt_facts_to_display: list[dict] = Field(default_factory=list)
 
 
 def initial_state() -> SessionState:
@@ -96,8 +95,6 @@ def receive(state, message):
                 state.reviewed.pop(call["arguments"].get("proposal_id"), None)
             elif call["name"] in EXECUTE_ACTIONS:
                 state.reviewed.pop(call["arguments"].get("proposal_id"), None)
-                if isinstance(body.get("customer_facts"), dict):
-                    state.receipt_facts_to_display.append(body["customer_facts"])
             elif call["name"] in {"abandon_plan", "transfer_to_human"}:
                 state.reviewed = {}
                 if call["name"] == "transfer_to_human":
@@ -156,16 +153,12 @@ def record_reply(state, reply, actions):
     if state.review_to_display and has_text:
         identifier = state.review_to_display["proposal_id"]
         expected = review_text(state.review_to_display)
-        if reply.content != expected + (receipt_text(state.receipt_facts_to_display) if state.receipt_facts_to_display else ""):
+        if reply.content != expected:
             raise ProtocolError("Review facts must actually be displayed")
         state.reviewed = {identifier: state.user_turn}
         state.review_to_display = None
     if state.handoff == "accepted" and reply.content != TRANSFER_NOTICE:
         raise ProtocolError("Accepted handoff requires exact notice")
-    if has_text and state.receipt_facts_to_display and state.handoff not in {"accepted", "unknown"}:
-        if not reply.content.endswith(receipt_text(state.receipt_facts_to_display)):
-            raise ProtocolError("Actual outcome facts must be displayed")
-        state.receipt_facts_to_display = []
     store(state, reply)
 
 
@@ -179,10 +172,6 @@ def review_text(proposal):
     if facts["kind"] in {"modify_items", "return", "exchange"}:
         ending += " Is this the complete list, or do you need any other item changes before this one-time request?"
     return "Prepared change " + proposal["proposal_id"] + ":\n" + json.dumps(recap, ensure_ascii=False, indent=2) + "\n" + ending
-
-
-def receipt_text(facts):
-    return "\nRecorded operation facts:\n" + json.dumps(facts, ensure_ascii=False, indent=2)
 
 
 def restore_history(state, history, actions):

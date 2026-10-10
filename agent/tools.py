@@ -4,4 +4,4 @@ from support_agent.adapters.change_tools import ChangeTools
 
 
 class Tools(ChangeTools):
-    """Expose verified reads, reviewed changes and terminal human handoff."""
+    """Expose session-authorized customer, owned-order and catalog read tools."""

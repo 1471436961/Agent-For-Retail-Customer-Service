@@ -1,6 +1,8 @@
 """Serializable evidence; no identity inference or business parsing."""
 
 from typing import Literal
+import json
+from support_agent.adapters.change_tools import EXECUTE_ACTIONS
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from tau2.data_model.message import (
@@ -25,6 +27,11 @@ class SessionState(BaseModel):
     tool_rounds: int = Field(default=0, ge=0)
     request_tool_rounds: int = Field(default=0, ge=0)
     halt_reason: str | None = None
+    pending_calls: list[dict] = Field(default_factory=list)
+    proposals: dict[str, dict] = Field(default_factory=dict)
+    reviewed: dict[str, int] = Field(default_factory=dict)
+    review_to_display: dict | None = None
+    user_turn: int = 0
 
 
 def initial_state() -> SessionState:
@@ -49,6 +56,7 @@ def receive(state, message):
         if state.pending_call_ids or message.tool_calls or not message.content or message.is_audio:
             raise ProtocolError("Unexpected user message or unfinished tool batch")
         state.request_tool_rounds = 0
+        state.user_turn += 1
     elif isinstance(message, (ToolMessage, MultiToolMessage)):
         results = message.tool_messages if isinstance(message, MultiToolMessage) else [message]
         identifiers = [result.id for result in results]
@@ -57,6 +65,35 @@ def receive(state, message):
                 any(result.requestor != "assistant" for result in results)):
             raise ProtocolError("Tool result batch does not match pending calls")
         state.pending_call_ids = []
+        calls = {call["id"]: call for call in state.pending_calls}
+        for result in results:
+            call = calls.get(result.id)
+            if result.error or not call:
+                continue
+            try:
+                body = json.loads(result.content)
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(body, dict):
+                continue
+            if call["name"] == "prepare_change" and body.get("state") == "prepared":
+                identifier = body.get("proposal_id")
+                if isinstance(identifier, str) and isinstance(body.get("facts"), dict):
+                    target = body["facts"].get("order_id")
+                    for previous_id, previous in state.proposals.items():
+                        if previous["facts"].get("order_id") == target:
+                            state.reviewed.pop(previous_id, None)
+                    state.proposals[identifier] = body
+            elif call["name"] == "review_change":
+                proposal = body.get("review")
+                identifier = call["arguments"].get("proposal_id")
+                if proposal == state.proposals.get(identifier) and proposal and proposal.get("state") == "prepared":
+                    state.review_to_display = proposal
+            elif call["name"] == "invalidate_change":
+                state.reviewed.pop(call["arguments"].get("proposal_id"), None)
+            elif call["name"] in EXECUTE_ACTIONS:
+                state.reviewed.pop(call["arguments"].get("proposal_id"), None)
+        state.pending_calls = []
     else:
         raise ProtocolError("Host input must be a user or tool result")
     store(state, message)
@@ -88,13 +125,43 @@ def record_reply(state, reply, actions):
     if len(calls) > 1 and any(call.name in {"verify_customer", "lookup_customer"} for call in calls):
         # Verification changes toolkit identity; dependent reads wait for its result.
         raise ProtocolError("Verification must use its own tool batch")
+    exclusive = {"prepare_change", "review_change", "invalidate_change", *EXECUTE_ACTIONS}
+    if len(calls) > 1 and any(call.name in exclusive for call in calls):
+        raise ProtocolError("State-changing or dependent actions require a single-call batch")
+    for call in calls:
+        if call.name in EXECUTE_ACTIONS:
+            identifier = call.arguments.get("proposal_id")
+            proposal = state.proposals.get(identifier)
+            if (identifier not in state.reviewed or state.user_turn <= state.reviewed[identifier] or
+                    not proposal or proposal["facts"].get("kind") != EXECUTE_ACTIONS[call.name]):
+                raise ProtocolError("Execution requires the exact displayed proposal and later user input")
     if calls:
         reply.content = None
         state.pending_call_ids = identifiers
+        state.pending_calls = [call.model_dump(mode="json") for call in calls]
         state.seen_call_ids.extend(identifiers)
         state.tool_rounds += 1
         state.request_tool_rounds += 1
+    if state.review_to_display and has_text:
+        identifier = state.review_to_display["proposal_id"]
+        expected = review_text(state.review_to_display)
+        if reply.content != expected:
+            raise ProtocolError("Review facts must actually be displayed")
+        state.reviewed = {identifier: state.user_turn}
+        state.review_to_display = None
     store(state, reply)
+
+
+def review_text(proposal):
+    facts = proposal["facts"]
+    recap = {key: value for key, value in facts.items() if key != "snapshot"}
+    if facts["kind"] in {"modify_items", "return", "exchange"}:
+        recap["original_items"] = facts["snapshot"]["order"]["items"]
+        recap["replacement_details"] = facts["snapshot"]["catalog"]
+    ending = "Please confirm this exact change."
+    if facts["kind"] in {"modify_items", "return", "exchange"}:
+        ending += " Is this the complete list, or do you need any other item changes before this one-time request?"
+    return "Prepared change " + proposal["proposal_id"] + ":\n" + json.dumps(recap, ensure_ascii=False, indent=2) + "\n" + ending
 
 
 def restore_history(state, history, actions):

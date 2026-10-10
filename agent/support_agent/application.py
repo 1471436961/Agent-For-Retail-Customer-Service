@@ -3,7 +3,7 @@
 from support_agent.gateway import GatewayAdapter
 from support_agent.prompts import SYSTEM_PROMPT
 from support_agent.state import (
-    ProtocolError, SessionState, initial_state, receive, record_reply, restore_history,
+    ProtocolError, SessionState, initial_state, receive, record_reply, restore_history, review_text,
 )
 from tau2.data_model.message import AssistantMessage, SystemMessage
 
@@ -33,6 +33,10 @@ class RetailAgent:
             receive(current, message)
         except ProtocolError:
             return self._stop(current, "invalid_host_sequence")
+        if current.review_to_display:
+            reply = AssistantMessage(role="assistant", content=review_text(current.review_to_display), timestamp=None)
+            record_reply(current, reply, self.gateway.actions_by_name)
+            return reply, current.model_dump(mode="json")
         if current.model_calls >= self.gateway.limits.max_model_calls:
             return self._stop(current, "model_call_limit")
         current.model_calls += 1  # Count attempts, including provider failures.

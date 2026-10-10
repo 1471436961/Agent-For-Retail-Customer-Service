@@ -144,6 +144,10 @@ class GatewayFailureTests(unittest.TestCase):
              ["quota", "for", "this", "model", "is", "not", "configured"]),
             ("Your account has insufficient quota.",
              ["your", "account", "has", "insufficient", "quota"]),
+            ("model_quota_insufficient", ["model", "quota", "insufficient"]),
+            ("该模型配额不足", ["model", "quota", "insufficient"]),
+            ("没有可用的模型额度", ["no", "available", "redacted", "model", "quota"]),
+            ("模型未配置配额", ["model", "missing", "quota"]),
         ):
             with self.subTest(message=message):
                 reply, state, _ = self.through_broker(RuntimeError(
@@ -157,6 +161,14 @@ class GatewayFailureTests(unittest.TestCase):
                 for private in ("sensitive-model", "sk-private-secret", "private.test", "12345"):
                     self.assertNotIn(private, emitted)
                 self.assertIsNone(state["gateway_diagnostic"]["provider_error_code"])
+
+    def test_unknown_quota_identifier_cannot_be_split_into_private_parts(self):
+        reply, state, _ = self.through_broker(RuntimeError(
+            "litellm.RateLimitError: OpenAIException - Error code: 429 - "
+            "{'detail':'model_quota_sensitive_account_secret'}"))
+        self.assertNotIn("model", state["gateway_diagnostic"]["provider_message_words"])
+        self.assertNotIn("account", state["gateway_diagnostic"]["provider_message_words"])
+        self.assertNotIn("sensitive", reply.content + json.dumps(state))
 
     def test_broker_sdk_parameter_failure_retains_cause_without_parameter_values(self):
         reply, state, _ = self.through_broker(ValueError(

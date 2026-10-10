@@ -50,21 +50,58 @@ ProviderWord = Literal[
     "rate", "tokens", "requests", "concurrency", "budget", "balance",
     "credits", "provider", "retry", "later", "daily", "monthly", "per",
     "minute", "second", "capacity", "error", "message", "detail", "code",
+    "allocated", "assigned", "allocation", "empty", "depleted", "blocked",
+    "permission", "registered", "current", "authentication", "required",
+    "request", "token", "does", "exist", "exists", "without", "cannot", "use",
 ]
 
 
 def _safe_provider_words(text):
     allowed = set(get_args(ProviderWord)) - {"redacted"}
+    # Provider JSON may escape Chinese text. Decode only CJK code points,
+    # leaving all other escapes/opaque identifiers intact for redaction.
+    text = re.sub(r"\\u([0-9a-fA-F]{4})",
+                  lambda match: chr(int(match[1], 16))
+                  if 0x4e00 <= int(match[1], 16) <= 0x9fff else match[0], text)
+    chinese = {
+        "模型": "model", "配额": "quota", "额度": "quota", "不足": "insufficient",
+        "没有": "no", "无可用": "unavailable", "未配置": "missing",
+        "未分配": "missing", "未授权": "denied", "未开通": "disabled",
+        "不可用": "unavailable", "可用": "available", "耗尽": "exhausted",
+        "用尽": "exhausted", "超出": "exceeded", "超过": "exceeded",
+        "未找到": "missing", "不存在": "missing", "账户": "account",
+        "用户": "user", "余额": "balance", "预算": "budget", "权限": "permission",
+        "限流": "rate", "并发": "concurrency", "每天": "daily", "每日": "daily",
+    }
     words = []
     for token in re.findall(r"[A-Za-z0-9_./@:+-]+|[\u4e00-\u9fff]+", text):
         # Keep email/URL/key-like tokens intact instead of splitting them into
         # coincidentally allowed words. Periods at sentence ends are harmless.
         normalized = token.lower().strip(".:")
-        word = normalized if normalized in allowed else "redacted"
-        if word != "redacted" or not words or words[-1] != "redacted":
-            words.append(word)
-        if len(words) == 64:
-            break
+        parts = re.split(r"[_-]", normalized)
+        if normalized in allowed:
+            safe = [normalized]
+        elif "quota" in parts and all(part in allowed for part in parts):
+            # Only fully-known quota symbols can be separated. Private tokens
+            # with even one unknown component remain wholly redacted.
+            safe = parts
+        elif token[0].isascii():
+            safe = ["redacted"]
+        else:
+            safe = []
+            position = 0
+            for match in re.finditer("|".join(map(re.escape, chinese)), token):
+                if match.start() != position:
+                    safe.append("redacted")
+                safe.append(chinese[match[0]])
+                position = match.end()
+            if position != len(token):
+                safe.append("redacted")
+        for word in safe:
+            if word != "redacted" or not words or words[-1] != "redacted":
+                words.append(word)
+            if len(words) == 64:
+                return words
     return words
 
 

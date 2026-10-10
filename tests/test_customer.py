@@ -7,27 +7,27 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agent"))
-from support_agent.adapters.customer_api import read_customer, verify_and_read_customer
+from support_agent.adapters.read_api import read_customer
 from support_agent.state import initial_state
+from tools import Tools
+from fixtures.p2_backend import SyntheticBackend
+from tau2.hyper.client_api import ClientAPI, ClientAPIContext
 
 
 class CustomerTests(unittest.TestCase):
     def test_verification_precedes_details_and_rejects_mismatch(self):
-        api = Mock()
-        search = SimpleNamespace(body={"customer_id": "customer_a"}, raise_for_status=Mock())
-        details = SimpleNamespace(body={"email": "a@example.test"}, raise_for_status=Mock())
-        api.request.side_effect = [search, details]
-        self.assertEqual(verify_and_read_customer(api, "customer_a", "a@example.test"), details.body)
-        self.assertEqual([call.args[:2] for call in api.request.call_args_list], [("POST", "/v1/customers/search"), ("GET", "/v1/customers/customer_a")])
-        api.reset_mock(side_effect=True)
-        api.request.return_value = search
-        with self.assertRaisesRegex(ValueError, "verification failed"):
-            verify_and_read_customer(api, "customer_b", "a@example.test")
-        self.assertEqual(api.request.call_count, 1)
-        api.reset_mock()
-        with self.assertRaisesRegex(ValueError, "Provide your email"):
-            verify_and_read_customer(api, "customer_a", "")
-        api.request.assert_not_called()
+        backend = SyntheticBackend()
+        kit = Tools(ClientAPI(backend, context=ClientAPIContext(conversation_id="offline_customer")))
+        self.assertEqual(kit.lookup_customer("p0_customer_a", "alex.p0@example.test"), backend.records["customers"][0])
+        self.assertEqual([(row["method"], row["path"]) for row in backend.calls],
+                         [("POST", "/v1/customers/search"), ("GET", "/v1/customers/p0_customer_a")])
+        backend.calls.clear()
+        with self.assertRaisesRegex(ValueError, "identity_verification_failed"):
+            kit.lookup_customer("p0_customer_b", "alex.p0@example.test")
+        self.assertFalse(backend.calls)
+        with self.assertRaisesRegex(ValueError, "incomplete_identity_selector"):
+            kit.lookup_customer("p0_customer_a", "")
+        self.assertFalse(backend.calls)
 
     def test_no_shared_conversation_state(self):
         first, second = initial_state(), initial_state()
@@ -35,19 +35,18 @@ class CustomerTests(unittest.TestCase):
         self.assertEqual(second.history, [])
 
     def test_transport_encodes_identifiers_and_checks_status(self):
-        response = SimpleNamespace(
-            body={"email": "sample@example.test"}, raise_for_status=Mock()
-        )
+        customer = SyntheticBackend().records["customers"][0]
+        customer["customer_id"] = "a/b?x"
+        response = SimpleNamespace(status_code=200, body=customer)
         api = Mock()
         api.request.return_value = response
         self.assertEqual(read_customer(api, "a/b?x"), response.body)
         api.request.assert_called_once_with("GET", "/v1/customers/a%2Fb%3Fx")
-        response.raise_for_status.assert_called_once()
 
     def test_transport_propagates_errors_without_retrying_writes(self):
         api = Mock()
-        api.request.return_value.raise_for_status.side_effect = ValueError("not found")
-        with self.assertRaisesRegex(ValueError, "not found"):
+        api.request.return_value = SimpleNamespace(status_code=404, body={"error":{"code":"resource_not_found"}})
+        with self.assertRaisesRegex(ValueError, "HTTP=404"):
             read_customer(api, "customer_missing")
         self.assertEqual(api.request.call_count, 1)
         with self.assertRaises(ValueError):

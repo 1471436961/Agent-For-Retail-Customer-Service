@@ -38,6 +38,35 @@ ProviderTerm = Literal[
     "invalid", "unsupported", "disabled", "authentication",
 ]
 
+# A closed vocabulary also preserves order/negation in an infrastructure error.
+# Unknown identifiers, numbers, URLs and credentials are replaced as a whole.
+# This is diagnostic evidence only; it never controls Agent/tool behavior.
+ProviderWord = Literal[
+    "redacted", "no", "not", "none", "missing", "available", "unavailable",
+    "configured", "enabled", "disabled", "allowed", "denied", "found",
+    "quota", "quotas", "model", "models", "for", "this", "the", "is", "has",
+    "have", "a", "an", "of", "on", "in", "to", "your", "user", "account",
+    "exceeded", "exhausted", "insufficient", "remaining", "enough", "limit",
+    "rate", "tokens", "requests", "concurrency", "budget", "balance",
+    "credits", "provider", "retry", "later", "daily", "monthly", "per",
+    "minute", "second", "capacity", "error", "message", "detail", "code",
+]
+
+
+def _safe_provider_words(text):
+    allowed = set(get_args(ProviderWord)) - {"redacted"}
+    words = []
+    for token in re.findall(r"[A-Za-z0-9_./@:+-]+|[\u4e00-\u9fff]+", text):
+        # Keep email/URL/key-like tokens intact instead of splitting them into
+        # coincidentally allowed words. Periods at sentence ends are harmless.
+        normalized = token.lower().strip(".:")
+        word = normalized if normalized in allowed else "redacted"
+        if word != "redacted" or not words or words[-1] != "redacted":
+            words.append(word)
+        if len(words) == 64:
+            break
+    return words
+
 
 class GatewayDiagnostic(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
@@ -47,6 +76,7 @@ class GatewayDiagnostic(BaseModel):
     reported_exception_type: ErrorType | None = None
     provider_error_code: ProviderErrorCode | None = None
     provider_message_terms: list[ProviderTerm] = Field(default_factory=list)
+    provider_message_words: list[ProviderWord] = Field(default_factory=list, max_length=64)
     rate_limit_kind: Literal[
         "account_quota", "model_quota", "quota_configuration", "budget",
         "token_rate", "request_rate", "concurrency", "upstream_capacity",
@@ -158,11 +188,13 @@ def diagnose_gateway_failure(error, *, stage="gateway_generate"):
                     status = int(match_status[1])
     provider_code = None
     terms = []
+    provider_words = []
     rate_kind = None
     if status == 429 and (reported == "RateLimitError" or name == "RateLimitError"):
         # Inspect only a recognized provider error. Retain fixed labels rather
         # than arbitrary message/body text, which can contain account IDs/keys.
         known_codes = get_args(ProviderErrorCode)
+        provider_words = _safe_provider_words(text)
         for match in re.finditer(r"[\"'](?:code|type|error)[\"']\s*:\s*[\"']([A-Za-z_]+)[\"']", text):
             if match[1] in known_codes:
                 provider_code = match[1]
@@ -219,5 +251,6 @@ def diagnose_gateway_failure(error, *, stage="gateway_generate"):
         http_status=status, reported_exception_type=reported,
         provider_error_code=provider_code, rate_limit_kind=rate_kind,
         provider_message_terms=terms,
+        provider_message_words=provider_words,
         origin=origin, failure_code=code,
     )

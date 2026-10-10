@@ -62,3 +62,20 @@ model_quota_exceeded、model_quota_not_configured、budget_exceeded 等。
 文字只分类为模型配额，不虚构 provider_error_code。只输出闭合标签。
 完整回归 165 项通过（13.269 秒），最终诊断针对测试 11 项通过（0.668 秒）。
 模型名始终取自注入网关，未修改配额、token 固定值、绑定或评测范围。
+
+## b495d6e 实际结果与配额错误证据
+
+Job 5f0296f4-756a-4c6b-8bbf-8a3e9e2c1916 / GitHub run 38042398816，t1 0/1。
+相同首请求仍收到 RateLimitError/429，原文包含 quota、model，但不包含
+上一版支持的固定错误码或 Model quota exceeded 等完整固定短语。
+因此不能把这个结果写成已确认 model_quota_exceeded。
+
+再次按 quota/429 精确问题查询 Parallight Lab，返回的仍为公开 U1、U2
+（INTERFACE-CLARIFICATIONS.md / d58e1786ae00）与本人摘要，未提供
+原始响应、配额检查条件或恢复入口。U2 明确可用模型与配额为独立限制。
+
+为了区分否定、缺失配置与耗尽，新增仅在已识别 429 中的有限词汇序列。
+保留 no/not/available/configured/exceeded 等固定词及顺序；未知完整 token
+替换成 redacted，不拆开邮箱、URL、账号、数值或 key。该序列只作诊断，
+不影响用户语义、模型调用、工具行为或限额，不据此猜测错误码。
+新增实际 SDK broker 测试验证词序及私密标识不外泄，12 项诊断测试通过。

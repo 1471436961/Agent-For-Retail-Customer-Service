@@ -136,6 +136,28 @@ class GatewayFailureTests(unittest.TestCase):
                 self.assertEqual(state["gateway_diagnostic"]["rate_limit_kind"], kind)
                 self.assertNotIn("sensitive_", reply.content + json.dumps(state))
 
+    def test_quota_negation_and_word_order_survive_without_private_identifiers(self):
+        for message, sequence in (
+            ("No quota available for model sensitive-model.",
+             ["no", "quota", "available", "for", "model", "redacted"]),
+            ("Quota for this model is not configured.",
+             ["quota", "for", "this", "model", "is", "not", "configured"]),
+            ("Your account has insufficient quota.",
+             ["your", "account", "has", "insufficient", "quota"]),
+        ):
+            with self.subTest(message=message):
+                reply, state, _ = self.through_broker(RuntimeError(
+                    "litellm.RateLimitError: OpenAIException - Error code: 429 - "
+                    + json.dumps({"message": message + " key sk-private-secret user@private.test "
+                                             "https://private.test/account?token=secret 12345"})))
+                words = state["gateway_diagnostic"]["provider_message_words"]
+                start = words.index(sequence[0])
+                self.assertEqual(words[start:start + len(sequence)], sequence)
+                emitted = reply.content + json.dumps(state)
+                for private in ("sensitive-model", "sk-private-secret", "private.test", "12345"):
+                    self.assertNotIn(private, emitted)
+                self.assertIsNone(state["gateway_diagnostic"]["provider_error_code"])
+
     def test_broker_sdk_parameter_failure_retains_cause_without_parameter_values(self):
         reply, state, _ = self.through_broker(ValueError(
             "Candidate model request contains unsupported arguments: sensitive-parameter"))

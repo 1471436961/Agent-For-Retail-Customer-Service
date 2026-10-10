@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from tau2.data_model.message import MultiToolMessage, ToolMessage
 from support_agent.state import decode
-from support_agent.adapters.customer_tools import READ_ACTION_NAMES
+from support_agent.adapters.change_tools import ACTION_NAMES
 
 
 @dataclass(frozen=True)
@@ -29,7 +29,7 @@ class GatewayAdapter:
         self.gateway = context.model_gateway
         self.limits = AgentLimits.from_runtime(context.runtime_config)
         self.model = self.gateway.available_models[0]
-        self.actions = context.action_interface.select(READ_ACTION_NAMES)
+        self.actions = context.action_interface.select(ACTION_NAMES)
         self.actions_by_name = {action.name: action for action in self.actions}
         if any(action.info.get("tool_type") != "read" for action in self.actions):
             raise ValueError("This stage only supports read actions")

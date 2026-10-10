@@ -30,6 +30,8 @@ class SessionState(BaseModel):
     request_tool_rounds: int = Field(default=0, ge=0)
     halt_reason: str | None = None
     gateway_diagnostic: GatewayDiagnostic | None = None
+    gateway_request: dict | None = None
+    verified_customer_id: str | None = None
     pending_calls: list[dict] = Field(default_factory=list)
     proposals: dict[str, dict] = Field(default_factory=dict)
     reviewed: dict[str, int] = Field(default_factory=dict)
@@ -81,7 +83,11 @@ def receive(state, message):
                 continue
             if not isinstance(body, dict):
                 continue
-            if call["name"] in {"prepare_change", "prepare_plan_step"} and body.get("state") == "prepared":
+            if call["name"] in {"verify_customer", "lookup_customer"}:
+                identifier = body.get("customer_id")
+                if isinstance(identifier, str) and identifier.strip():
+                    state.verified_customer_id = identifier
+            elif call["name"] in {"prepare_change", "prepare_plan_step"} and body.get("state") == "prepared":
                 identifier = body.get("proposal_id")
                 if isinstance(identifier, str) and isinstance(body.get("facts"), dict):
                     target = body["facts"].get("order_id")

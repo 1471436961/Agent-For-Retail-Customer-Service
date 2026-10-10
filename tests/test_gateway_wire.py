@@ -46,6 +46,38 @@ class GatewayWireTests(unittest.TestCase):
         self.provider = self.enterContext(patch("tau2.utils.llm_utils.completion"))
         self.enterContext(patch("tau2.utils.llm_utils.get_response_cost", return_value=0))
 
+    def test_unverified_request_is_small_and_business_capabilities_require_real_result(self):
+        customer = self.backend.records["customers"][0]
+        self.provider.side_effect = [completion(arguments={"email": customer["email"]}),
+                                    completion(content="Your verified email is " + customer["email"])]
+        reply, state = self.agent.generate_next_message(self.user, self.agent.get_init_state())
+        first = self.provider.call_args.kwargs
+        names = {t["function"]["name"] for t in first["tools"]}
+        self.assertEqual(names, {"verify_customer", "lookup_customer", "transfer_to_human"})
+        self.assertIsNone(state["verified_customer_id"])
+        self.assertLess(state["gateway_request"]["request_bytes"], 5000)
+        self.assertEqual(state["gateway_request"]["fixed_token_settings"], {"max_tokens": 1024})
+        self.assertEqual(state["gateway_request"]["model_call"], 1)
+        call = reply.tool_calls[0]
+        actual = self.kit.get_tools()[call.name](**call.arguments)
+        reply, state = self.agent.generate_next_message(MultiToolMessage(role="tool", tool_messages=[
+            ToolMessage(role="tool", id=call.id, content=json.dumps(actual))]), state)
+        self.assertEqual(state["verified_customer_id"], customer["customer_id"])
+        self.assertIn("prepare_change", {t["function"]["name"]
+                                        for t in self.provider.call_args.kwargs["tools"]})
+        self.assertIn(actual["email"], reply.content)
+
+    def test_failed_verification_does_not_unlock_business_tools(self):
+        self.provider.side_effect = [completion(arguments={"email": "missing@example.test"}),
+                                    completion(content="Please check the identifying information.")]
+        reply, state = self.agent.generate_next_message(self.user, self.agent.get_init_state())
+        call = reply.tool_calls[0]
+        _, state = self.agent.generate_next_message(MultiToolMessage(role="tool", tool_messages=[
+            ToolMessage(role="tool", id=call.id, content='{"customer_id":"untrusted"}', error=True)]), state)
+        self.assertIsNone(state["verified_customer_id"])
+        self.assertEqual({t["function"]["name"] for t in self.provider.call_args.kwargs["tools"]},
+                         {"verify_customer", "lookup_customer", "transfer_to_human"})
+
     def test_reused_provider_id_has_matching_results_in_both_wire_rounds(self):
         customer = self.backend.records["customers"][0]
         self.provider.side_effect = [completion(arguments={"email": customer["email"]}),
@@ -68,8 +100,14 @@ class GatewayWireTests(unittest.TestCase):
         self.assertEqual(result_ids, ids)
 
     def test_preparation_and_plan_wire_schemas_include_complete_field_shapes(self):
-        self.provider.return_value = completion(content="Please identify your account.")
-        self.agent.generate_next_message(self.user, self.agent.get_init_state())
+        customer = self.backend.records["customers"][0]
+        self.provider.side_effect = [completion(arguments={"email": customer["email"]}),
+                                    completion(content="How can I help with your account?")]
+        reply, state = self.agent.generate_next_message(self.user, self.agent.get_init_state())
+        call = reply.tool_calls[0]
+        result = self.kit.get_tools()[call.name](**call.arguments)
+        self.agent.generate_next_message(MultiToolMessage(role="tool", tool_messages=[
+            ToolMessage(role="tool", id=call.id, content=json.dumps(result))]), state)
         schemas = {t["function"]["name"]: t["function"]["parameters"]
                    for t in self.provider.call_args.kwargs["tools"]}
         for name in ("prepare_change", "plan_changes"):
@@ -209,7 +247,8 @@ class GatewayWireTests(unittest.TestCase):
             reply, state = self.agent.generate_next_message(self.user, self.agent.get_init_state())
             self.assertEqual(state["gateway_diagnostic"], {
                 "stage": "gateway_generate", "exception_type": "TypeError", "http_status": None,
-                "reported_exception_type": None, "origin": None, "failure_code": None})
+                "reported_exception_type": None, "provider_error_code": None, "rate_limit_kind": None,
+                "origin": None, "failure_code": None})
             self.assertIn('"exception_type": "TypeError"', reply.content)
             self.assertNotIn("synthetic-sensitive", reply.content + json.dumps(state))
             again, restored = self.agent.generate_next_message(self.user, json.loads(json.dumps(state)))

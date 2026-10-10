@@ -26,6 +26,14 @@ class GatewayDiagnostic(BaseModel):
     exception_type: ErrorType
     http_status: int | None = Field(default=None, ge=100, le=599)
     reported_exception_type: ErrorType | None = None
+    provider_error_code: Literal[
+        "insufficient_quota", "rate_limit_exceeded", "rate_limit_error",
+        "tokens", "requests", "resource_exhausted", "RESOURCE_EXHAUSTED",
+        "model_rate_limit", "too_many_requests", "overloaded_error",
+    ] | None = None
+    rate_limit_kind: Literal[
+        "account_quota", "token_rate", "request_rate", "concurrency", "upstream_capacity",
+    ] | None = None
     origin: Literal[
         "model_broker", "gateway_constraints", "gateway_accounting",
         "model_routing", "message_conversion", "sdk_generation",
@@ -131,6 +139,27 @@ def diagnose_gateway_failure(error, *, stage="gateway_generate"):
                 match_status = re.search(r"\bError code: ([1-5][0-9]{2})\b", text)
                 if match_status:
                     status = int(match_status[1])
+    provider_code = None
+    rate_kind = None
+    if status == 429 and (reported == "RateLimitError" or name == "RateLimitError"):
+        # Inspect only a recognized provider error. Retain fixed labels rather
+        # than arbitrary message/body text, which can contain account IDs/keys.
+        known_codes = GatewayDiagnostic.model_fields["provider_error_code"].annotation.__args__[0].__args__
+        for match in re.finditer(r"[\"'](?:code|type)[\"']\s*:\s*[\"']([A-Za-z_]+)[\"']", text):
+            if match[1] in known_codes:
+                provider_code = match[1]
+                break
+        lower = text.lower()
+        if provider_code == "insufficient_quota" or "exceeded your current quota" in lower:
+            rate_kind = "account_quota"
+        elif provider_code == "tokens" or "tokens per min" in lower or "tokens per minute" in lower:
+            rate_kind = "token_rate"
+        elif provider_code == "requests" or "requests per min" in lower or "requests per minute" in lower:
+            rate_kind = "request_rate"
+        elif "concurrent requests" in lower or "concurrency limit" in lower:
+            rate_kind = "concurrency"
+        elif provider_code == "overloaded_error" or "model capacity" in lower or "temporarily overloaded" in lower:
+            rate_kind = "upstream_capacity"
     code = _message_code(text) or _TYPE_CODES.get(reported or name)
     if origin == "model_broker" and code is None:
         code = "unclassified_broker_error"
@@ -138,5 +167,6 @@ def diagnose_gateway_failure(error, *, stage="gateway_generate"):
         stage=stage,
         exception_type=name if name in allowed else "OtherError",
         http_status=status, reported_exception_type=reported,
+        provider_error_code=provider_code, rate_limit_kind=rate_kind,
         origin=origin, failure_code=code,
     )

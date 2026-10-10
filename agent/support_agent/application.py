@@ -1,7 +1,7 @@
 """Host-executed tools with one bounded correction of an invalid model reply."""
 
 from support_agent.gateway import GatewayAdapter
-from support_agent.prompts import SYSTEM_PROMPT
+from support_agent.prompts import IDENTITY_PROMPT, SYSTEM_PROMPT
 from support_agent.state import (
     ProtocolError, SessionState, initial_state, receive, record_reply, restore_history, review_text, receipt_text, store, normalize_call_ids,
 )
@@ -50,7 +50,9 @@ class RetailAgent:
         if current.model_calls >= self.gateway.limits.max_model_calls:
             return self._stop(current, "model_call_limit")
         try:
-            messages = [SystemMessage(role="system", content=SYSTEM_PROMPT, timestamp=None),
+            prompt = SYSTEM_PROMPT if current.verified_customer_id else IDENTITY_PROMPT
+            actions = self.gateway.actions_for(current)
+            messages = [SystemMessage(role="system", content=prompt, timestamp=None),
                         *self.gateway.project_history(current.history)]
         except Exception as error:
             current.gateway_diagnostic = diagnose_gateway_failure(error, stage="history_projection")
@@ -58,7 +60,8 @@ class RetailAgent:
         for attempt in range(2):
             current.model_calls += 1  # Count attempts, including corrections/failures.
             try:
-                reply = self.gateway.generate(messages)
+                current.gateway_request = self.gateway.request_summary(messages, actions, current.model_calls)
+                reply = self.gateway.generate(messages, actions=actions)
             except Exception as error:
                 # Provider failures are not retried by the Agent.
                 current.gateway_diagnostic = diagnose_gateway_failure(error)
@@ -117,6 +120,8 @@ class RetailAgent:
             diagnostic = " Service diagnostic: " + json.dumps(
                 state.gateway_diagnostic.model_dump(exclude_none=True), sort_keys=True,
             )
+            if state.gateway_request:
+                diagnostic += " Model request: " + json.dumps(state.gateway_request, sort_keys=True)
         facts = receipt_text(state.receipt_facts_to_display) if state.receipt_facts_to_display else ""
         reply = AssistantMessage(
             role="assistant", timestamp=None,

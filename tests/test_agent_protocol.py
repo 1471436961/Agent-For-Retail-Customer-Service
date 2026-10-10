@@ -128,7 +128,8 @@ class ProtocolTests(unittest.TestCase):
             self.agent.generate_next_message(user(), self.agent.get_init_state())
         kwargs = gateway.call_args.kwargs
         self.assertEqual(kwargs["model"], "offline_model")
-        self.assertEqual(kwargs["actions"], self.context.action_interface.select(ACTION_NAMES))
+        self.assertEqual(kwargs["actions"], self.context.action_interface.select(
+            ["verify_customer", "lookup_customer", "transfer_to_human"]))
         self.assertNotIn("max_tokens", kwargs)
         self.agent.generate_next_message(user(), self.agent.get_init_state())
         self.assertEqual(self.provider.call_args.kwargs["max_tokens"], 1024)

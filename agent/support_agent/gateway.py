@@ -4,6 +4,7 @@ import json
 from copy import deepcopy
 from dataclasses import dataclass
 from itertools import product
+import re
 
 from tau2.data_model.message import MultiToolMessage, ToolMessage
 from support_agent.state import decode
@@ -54,9 +55,33 @@ class GatewayAdapter:
                     return model, options
         raise ValueError("Allowed model configurations are ambiguous or have no valid explicit choices")
 
-    def generate(self, messages):
+    def actions_for(self, state):
+        # These are capabilities unlocked by genuine tool evidence, never by
+        # matching the wording of the customer's request. The toolkit remains
+        # the authority for identity, ownership and write authorization.
+        if state.verified_customer_id:
+            return self.actions
+        return tuple(action for action in self.actions if action.name in {
+            "verify_customer", "lookup_customer", "transfer_to_human",
+        })
+
+    def request_summary(self, messages, actions, model_call):
+        # Serialize only to measure the candidate-visible wire size. No message,
+        # tool result, credential or arbitrary provider text is retained here.
+        payload = {"messages": [message.model_dump(mode="json", exclude_none=True)
+                                for message in messages],
+                   "tools": [action.openai_schema for action in actions]}
+        _, resolved = self.gateway.validate_request(self.model, self.options)
+        constraints = {name: resolved[name] for name in ("max_tokens", "max_completion_tokens")
+                       if type(resolved.get(name)) is int and resolved[name] > 0}
+        model = self.model if re.fullmatch(r"[A-Za-z0-9_./:@+-]{1,160}", self.model) else "redacted"
+        return {"model": model, "model_call": model_call, "action_count": len(actions),
+                "message_count": len(messages), "request_bytes": len(json.dumps(payload).encode()),
+                "fixed_token_settings": constraints}
+
+    def generate(self, messages, actions=None):
         return self.gateway.generate(
-            model=self.model, messages=messages, actions=self.actions,
+            model=self.model, messages=messages, actions=self.actions if actions is None else actions,
             call_name="retail_agent_decision", **self.options,
         )
 

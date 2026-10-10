@@ -5,7 +5,7 @@ fixed labels, known exception types and integer HTTP statuses leave this module.
 """
 
 import re
-from typing import Literal
+from typing import Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -20,17 +20,30 @@ ErrorType = Literal[
 ]
 
 
+ProviderErrorCode = Literal[
+    "insufficient_quota", "rate_limit_exceeded", "rate_limit_error",
+    "tokens", "requests", "resource_exhausted", "RESOURCE_EXHAUSTED",
+    "model_rate_limit", "too_many_requests", "overloaded_error",
+]
+
+# A vocabulary of infrastructure concepts, not a redacted copy of a response.
+# No arbitrary words, identifiers, numbers, URLs or credentials can survive.
+ProviderTerm = Literal[
+    "quota", "credits", "balance", "billing", "budget", "exhausted",
+    "rate_limit", "tokens", "requests", "concurrency", "capacity",
+    "overloaded", "unavailable", "daily", "retry", "model", "provider",
+    "invalid", "unsupported", "disabled", "authentication",
+]
+
+
 class GatewayDiagnostic(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     stage: Literal["history_projection", "gateway_generate"] = "gateway_generate"
     exception_type: ErrorType
     http_status: int | None = Field(default=None, ge=100, le=599)
     reported_exception_type: ErrorType | None = None
-    provider_error_code: Literal[
-        "insufficient_quota", "rate_limit_exceeded", "rate_limit_error",
-        "tokens", "requests", "resource_exhausted", "RESOURCE_EXHAUSTED",
-        "model_rate_limit", "too_many_requests", "overloaded_error",
-    ] | None = None
+    provider_error_code: ProviderErrorCode | None = None
+    provider_message_terms: list[ProviderTerm] = Field(default_factory=list)
     rate_limit_kind: Literal[
         "account_quota", "token_rate", "request_rate", "concurrency", "upstream_capacity",
     ] | None = None
@@ -140,16 +153,32 @@ def diagnose_gateway_failure(error, *, stage="gateway_generate"):
                 if match_status:
                     status = int(match_status[1])
     provider_code = None
+    terms = []
     rate_kind = None
     if status == 429 and (reported == "RateLimitError" or name == "RateLimitError"):
         # Inspect only a recognized provider error. Retain fixed labels rather
         # than arbitrary message/body text, which can contain account IDs/keys.
-        known_codes = GatewayDiagnostic.model_fields["provider_error_code"].annotation.__args__[0].__args__
+        known_codes = get_args(ProviderErrorCode)
         for match in re.finditer(r"[\"'](?:code|type)[\"']\s*:\s*[\"']([A-Za-z_]+)[\"']", text):
             if match[1] in known_codes:
                 provider_code = match[1]
                 break
         lower = text.lower()
+        words = set(re.findall(r"[a-z]+", lower))
+        forms = {
+            "quota": ("quota", "额度", "配额"), "credits": ("credit", "credits"),
+            "balance": ("balance", "余额"), "billing": ("billing",), "budget": ("budget",),
+            "exhausted": ("exhausted", "用尽", "耗尽"),
+            "rate_limit": ("rate", "限流", "频率"), "tokens": ("token", "tokens"),
+            "requests": ("request", "requests"), "concurrency": ("concurrency", "concurrent", "并发"),
+            "capacity": ("capacity",), "overloaded": ("overloaded", "过载"),
+            "unavailable": ("unavailable", "不可用"), "daily": ("daily", "每天", "每日"),
+            "retry": ("retry",), "model": ("model", "模型"), "provider": ("provider",),
+            "invalid": ("invalid",), "unsupported": ("unsupported",),
+            "disabled": ("disabled", "停用"), "authentication": ("authentication",),
+        }
+        terms = [label for label, variants in forms.items()
+                 if any(value in words if value.isascii() else value in lower for value in variants)]
         if provider_code == "insufficient_quota" or "exceeded your current quota" in lower:
             rate_kind = "account_quota"
         elif provider_code == "tokens" or "tokens per min" in lower or "tokens per minute" in lower:
@@ -168,5 +197,6 @@ def diagnose_gateway_failure(error, *, stage="gateway_generate"):
         exception_type=name if name in allowed else "OtherError",
         http_status=status, reported_exception_type=reported,
         provider_error_code=provider_code, rate_limit_kind=rate_kind,
+        provider_message_terms=terms,
         origin=origin, failure_code=code,
     )

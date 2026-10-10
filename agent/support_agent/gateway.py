@@ -77,7 +77,8 @@ class GatewayAdapter:
         model = self.model if re.fullmatch(r"[A-Za-z0-9_./:@+-]{1,160}", self.model) else "redacted"
         return {"model": model, "model_call": model_call, "action_count": len(actions),
                 "message_count": len(messages), "request_bytes": len(json.dumps(payload).encode()),
-                "fixed_token_settings": constraints}
+                "fixed_token_settings": constraints, "allowed_model_count": len(self.gateway.available_models),
+                "selected_option_names": sorted(self.options)}
 
     def generate(self, messages, actions=None):
         return self.gateway.generate(

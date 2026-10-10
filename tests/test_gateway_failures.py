@@ -108,6 +108,17 @@ class GatewayFailureTests(unittest.TestCase):
                 self.assertEqual(state["gateway_request"]["model_call"], 1)
                 self.assertNotIn("sensitive-", reply.content + json.dumps(state))
 
+    def test_custom_gateway_quota_message_yields_safe_terms_without_original_text(self):
+        reply, state, _ = self.through_broker(RuntimeError(
+            "litellm.RateLimitError: OpenAIException - Error code: 429 - "
+            "{'detail':'模型每日额度耗尽 sensitive-account sensitive-key https://private.test'}"))
+        self.assertEqual(state["gateway_diagnostic"]["provider_message_terms"],
+                         ["quota", "exhausted", "daily", "model"])
+        self.assertEqual(state["gateway_request"]["allowed_model_count"], 1)
+        self.assertEqual(state["gateway_request"]["selected_option_names"], [])
+        self.assertNotIn("sensitive-", reply.content + json.dumps(state))
+        self.assertNotIn("private.test", reply.content + json.dumps(state))
+
     def test_broker_sdk_parameter_failure_retains_cause_without_parameter_values(self):
         reply, state, _ = self.through_broker(ValueError(
             "Candidate model request contains unsupported arguments: sensitive-parameter"))

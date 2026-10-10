@@ -248,7 +248,7 @@ class GatewayWireTests(unittest.TestCase):
             self.assertEqual(state["gateway_diagnostic"], {
                 "stage": "gateway_generate", "exception_type": "TypeError", "http_status": None,
                 "reported_exception_type": None, "provider_error_code": None, "rate_limit_kind": None,
-                "origin": None, "failure_code": None})
+                "provider_message_terms": [], "origin": None, "failure_code": None})
             self.assertIn('"exception_type": "TypeError"', reply.content)
             self.assertNotIn("synthetic-sensitive", reply.content + json.dumps(state))
             again, restored = self.agent.generate_next_message(self.user, json.loads(json.dumps(state)))

@@ -59,6 +59,7 @@ class RetailAgent:
             return self._stop(current, "gateway_failure")
         for attempt in range(2):
             current.model_calls += 1  # Count attempts, including corrections/failures.
+            current.gateway_request = None
             try:
                 current.gateway_request = self.gateway.request_summary(messages, actions, current.model_calls)
                 reply = self.gateway.generate(messages, actions=actions)
@@ -120,7 +121,7 @@ class RetailAgent:
             diagnostic = " Service diagnostic: " + json.dumps(
                 state.gateway_diagnostic.model_dump(exclude_none=True), sort_keys=True,
             )
-            if state.gateway_request:
+            if state.gateway_request and state.gateway_diagnostic.stage == "gateway_generate":
                 diagnostic += " Model request: " + json.dumps(state.gateway_request, sort_keys=True)
         facts = receipt_text(state.receipt_facts_to_display) if state.receipt_facts_to_display else ""
         reply = AssistantMessage(

@@ -1,0 +1,99 @@
+{
+  "stage": "P2",
+  "status": "passed",
+  "generated_at_utc": "2026-10-09T15:58:24.261018+00:00",
+  "verification_kind": "Executed offline unittest with real installed tau2 types, gateway and tools; provider and business backend are synthetic",
+  "executed_commands": [
+    ".\\.venv\\Scripts\\python.exe -m unittest discover -s tests -v",
+    ".\\.venv\\Scripts\\python.exe .\\.venv\\check_tau2_install.py"
+  ],
+  "unit_tests": {
+    "executed": 61,
+    "passed": 61,
+    "failed": 0,
+    "errors": 0,
+    "by_file": {
+      "test_agent_protocol.py": 22,
+      "test_customer.py": 4,
+      "test_read_scope.py": 35
+    }
+  },
+  "sdk_compatibility_checks": {
+    "executed": 7,
+    "passed": 7
+  },
+  "readonly_operations": [
+    "searchCustomers",
+    "getCustomer",
+    "getOrder",
+    "listProducts",
+    "getProduct",
+    "getCatalogItem"
+  ],
+  "model_facing_tools": [
+    "verify_customer",
+    "lookup_customer",
+    "get_customer_summary",
+    "list_customer_orders",
+    "get_owned_order",
+    "list_products",
+    "get_product_variants",
+    "get_catalog_item",
+    "get_catalog_summary"
+  ],
+  "model_schema_parity_against_openapi": "six expanded response schemas match exactly; finite monetary values additionally required by U3/U6",
+  "contract_sha256": "f2268b325c442206b1234c4a16dbd5a7f4ff81a925be56d9fb0be59cf8a56594",
+  "guard_checks": [
+    "independent selector before profile",
+    "claimed ID match",
+    "single toolkit-owned customer",
+    "own order list and actual ownership",
+    "no account existence leakage in verification failures",
+    "fresh toolkit/context identity isolation",
+    "no write operations"
+  ],
+  "real_client_api_capacity_tests": {
+    "request": "413 before synthetic backend called",
+    "response": "502 without truncation or retry"
+  },
+  "deterministic_replay": "same outcomes, errors, API requests and identity on fresh synthetic backend/toolkit under project all-calls replay contract",
+  "agent_package_files_excluding_pycache": 15,
+  "agent_package_bytes": 32113,
+  "agent_file_sha256": {
+    "agent/agent.json": "7c8b0cb6c62e4ba39a16f827830ec530aa9ac9916fe52873c4a490bc4a9355c9",
+    "agent/agent.py": "4950c6845dd9d14bb9e7cb617158504bd6de0898c195138ecc4e075916eb675f",
+    "agent/support_agent/__init__.py": "b945c22ad75d95e3672da9ec456c099e951fc059f8580e9ed07b3840b095770a",
+    "agent/support_agent/adapters/__init__.py": "22d3f8d91bb91ea0615860036b38771c962bc192dbafbcf0c5523171f6da1807",
+    "agent/support_agent/adapters/customer_tools.py": "3086662f1de75050f019e41d670019f37c5ef7efe17718c6d41e92b490d94d1f",
+    "agent/support_agent/adapters/read_api.py": "cba96a3edd01b2b88b19937b74faed7a698639dc097d54ac1349c6d02240a464",
+    "agent/support_agent/adapters/read_models.py": "883697527565c7523a705b3456cc7c8c4ae18f07d6dc0cc6c26ed7d9f3796cf9",
+    "agent/support_agent/application.py": "78639cb3ba4482ebb7544d496cf5b37481ae7933872cacaa3a43e7c7c827e431",
+    "agent/support_agent/config.py": "bed92066063c625472fe3afe92d268b1330b89f18fed3efc97e8c42f073ebc22",
+    "agent/support_agent/domain/__init__.py": "fce2b1e04b26ebe9cbf5e0ba5a04b7aa2a5deb078461c0d810cb41143f1594f1",
+    "agent/support_agent/domain/identity.py": "e3be6fcfa8f43230b7b71998fe27b1eed6f3857c66ace3de3567842b91f7260c",
+    "agent/support_agent/gateway.py": "32778184d7503e3fa9238676ea5b47817ca66e4261a2785925bd20309a0ff976",
+    "agent/support_agent/prompts.py": "3bd936993a637abaeb08eab8d2379c88a500c7e39b5dadef24b6cd37d8929aaf",
+    "agent/support_agent/state.py": "64d955ce5c8da66052a9ea3a78c3113de53588addd21e88c14256d9ad780e544",
+    "agent/tools.py": "9e6dbaf82381c09fedab924f90ec07e183814354d8bef67dc82375bb53eed0ee"
+  },
+  "python_syntax": "passed",
+  "scope": {
+    "binding": "3d81f316-16c1-452d-939f-48776870bd23",
+    "branch": "main",
+    "domain": "retail_plus",
+    "language": "python",
+    "task": "t1",
+    "case_ids": null
+  },
+  "real_provider_called": false,
+  "remote_evaluation_executed": false,
+  "pushed": false,
+  "p3_started": false,
+  "semantic_comprehension_verified": false,
+  "tau2_source_commit": "6e9f34c685d40fa7a9f5935d8970af6fd9d5f118",
+  "remaining_verification": [
+    "real model language understanding",
+    "classroom deployed runtime and replay compatibility",
+    "P3 and later business capabilities"
+  ]
+}

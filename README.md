@@ -1,6 +1,6 @@
 # Enterprise AI Environment 学生项目
 
-当前开发进度：P0 证据/API 基线与 P1 模型驱动协议骨架已完成，见 [实施规划](docs/IMPLEMENTATION-PLAN.md) 和 [P1 验证记录](docs/P1-IMPLEMENTATION.md)。P1 使用注入的 tau2 gateway，只接现有 email lookup；完整业务能力尚未实现。本地测试请使用仓库 `.venv` 的 Python，不调用真实模型。
+当前开发进度：P0/P1/P2已完成，见 [实施规划](docs/IMPLEMENTATION-PLAN.md) 和 [P2记录](docs/P2-IMPLEMENTATION.md)。Agent使用注入的tau2 gateway理解对话，工具执行邮箱/姓名+邮编验证、单客户绑定、本人订单与公共目录读取。当前离线61/61通过；完整变更业务与真实模型能力尚未验证。本地测试请使用仓库 `.venv` 的 Python，不调用真实模型。
 
 **接口补充说明：**先阅读 [INTERFACE-CLARIFICATIONS.md](INTERFACE-CLARIFICATIONS.md)。它统一说明模型网关、用量与预算、历史字段映射、目录查询权限、重复商品数量、订单状态和当前金额舍入行为（U1–U6）。正常 schema 与正式环境鲁棒性测试的区别也在其中；不包含作业答案。
 

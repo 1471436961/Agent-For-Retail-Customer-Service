@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT / "agent"))
 from agent import create_agent
 from tools import Tools
 from support_agent.state import ProtocolError
+from support_agent.adapters.customer_tools import READ_ACTION_NAMES
 from tau2.data_model.message import (
     AssistantMessage, MultiToolMessage, ToolCall, ToolMessage, UserMessage,
 )
@@ -127,11 +128,11 @@ class ProtocolTests(unittest.TestCase):
             self.agent.generate_next_message(user(), self.agent.get_init_state())
         kwargs = gateway.call_args.kwargs
         self.assertEqual(kwargs["model"], "offline_model")
-        self.assertEqual(kwargs["actions"], self.context.action_interface.select(["lookup_customer"]))
+        self.assertEqual(kwargs["actions"], self.context.action_interface.select(READ_ACTION_NAMES))
         self.assertNotIn("max_tokens", kwargs)
         self.agent.generate_next_message(user(), self.agent.get_init_state())
         self.assertEqual(self.provider.call_args.kwargs["max_tokens"], 1024)
-        self.assertEqual(self.provider.call_args.kwargs["tools"][0].name, "lookup_customer")
+        self.assertIn("lookup_customer", [tool.name for tool in self.provider.call_args.kwargs["tools"]])
 
     def test_one_of_is_explicit_fixed_value_is_omitted(self):
         agent = self.build(self.make_context(models=[{"model": "choice_model", "constraints": {
@@ -150,7 +151,8 @@ class ProtocolTests(unittest.TestCase):
         self.provider.assert_not_called()
 
     def test_multiple_results_reversed_order_and_error_preserved(self):
-        state = self.pending(call("a"), call("b"))
+        state = self.pending(call("a", name="get_customer_summary", arguments={}),
+                             call("b", name="list_customer_orders", arguments={}))
         self.provider.return_value = text_reply("One lookup failed; no successful record is available for it.")
         _, final = self.agent.generate_next_message(
             results(tool_result("b", '{"email":"must-not-be-a-success"}', error=True), tool_result("a")), state,
@@ -175,7 +177,8 @@ class ProtocolTests(unittest.TestCase):
         for messages in ([tool_result("a")], [tool_result("a"), tool_result("x")],
                          [tool_result("a"), tool_result("a")]):
             with self.subTest(ids=[m.id for m in messages]):
-                state = self.pending(call("a"), call("b"))
+                state = self.pending(call("a", name="get_customer_summary", arguments={}),
+                                     call("b", name="list_customer_orders", arguments={}))
                 previous_calls = self.provider.call_count
                 reply, final = self.agent.generate_next_message(results(*messages), state)
                 self.assert_halt(final, "invalid_host_sequence")
@@ -241,7 +244,9 @@ class ProtocolTests(unittest.TestCase):
         self.provider.assert_not_called()
 
     def test_history_individual_tool_results_are_restored_as_batch(self):
-        history = [user(), calls_reply(call("a"), call("b")), tool_result("b"), tool_result("a"), text_reply()]
+        history = [user(), calls_reply(call("a", name="get_customer_summary", arguments={}),
+                                      call("b", name="list_customer_orders", arguments={})),
+                   tool_result("b"), tool_result("a"), text_reply()]
         state = self.agent.get_init_state(history)
         self.assertEqual(state["pending_call_ids"], [])
         self.assertEqual(state["tool_rounds"], 1)

@@ -85,6 +85,9 @@ def record_reply(state, reply, actions):
             tool.params.model_validate(call.arguments, strict=True)
         except ValueError as error:
             raise ProtocolError("Arguments do not match tool schema") from error
+    if len(calls) > 1 and any(call.name in {"verify_customer", "lookup_customer"} for call in calls):
+        # Verification changes toolkit identity; dependent reads wait for its result.
+        raise ProtocolError("Verification must use its own tool batch")
     if calls:
         reply.content = None
         state.pending_call_ids = identifiers

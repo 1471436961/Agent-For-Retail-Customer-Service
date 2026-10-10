@@ -1,0 +1,58 @@
+{
+  "status": "passed",
+  "generated_at_utc": "2026-10-09T15:33:30.195930+00:00",
+  "verification_kind": "Executed local unittest with actual installed tau2 and mock provider/backend; not a remote or real-model evaluation",
+  "executed_command": ".\\.venv\\Scripts\\python.exe -m unittest discover -s tests -v",
+  "unit_tests": {
+    "executed": 26,
+    "passed": 26,
+    "failed": 0,
+    "errors": 0,
+    "protocol_tests": 22,
+    "retained_api_state_tests": 4
+  },
+  "python_syntax": "passed",
+  "agent_package_files_excluding_pycache": 13,
+  "agent_package_bytes": 16738,
+  "agent_file_sha256": {
+    "agent/agent.json": "7c8b0cb6c62e4ba39a16f827830ec530aa9ac9916fe52873c4a490bc4a9355c9",
+    "agent/agent.py": "4950c6845dd9d14bb9e7cb617158504bd6de0898c195138ecc4e075916eb675f",
+    "agent/support_agent/__init__.py": "b945c22ad75d95e3672da9ec456c099e951fc059f8580e9ed07b3840b095770a",
+    "agent/support_agent/adapters/__init__.py": "22d3f8d91bb91ea0615860036b38771c962bc192dbafbcf0c5523171f6da1807",
+    "agent/support_agent/adapters/customer_api.py": "e34d7147cad1fba0f1c70c7dc4942abd6ebb68c37c847b0dc946afac1aed8359",
+    "agent/support_agent/adapters/customer_tools.py": "d49a10728e13bee8b76a8bcdd11030fc038c5b2af67e76e37d2533d2909c0c80",
+    "agent/support_agent/application.py": "78639cb3ba4482ebb7544d496cf5b37481ae7933872cacaa3a43e7c7c827e431",
+    "agent/support_agent/config.py": "bed92066063c625472fe3afe92d268b1330b89f18fed3efc97e8c42f073ebc22",
+    "agent/support_agent/domain/__init__.py": "fce2b1e04b26ebe9cbf5e0ba5a04b7aa2a5deb078461c0d810cb41143f1594f1",
+    "agent/support_agent/gateway.py": "82b2b1499318c62fc6e1586492fc56fe9076571fa4350a1cd367e86d6bda33fb",
+    "agent/support_agent/prompts.py": "a7d431deac1335d05ed4e34edc2fb8b615975863e320ea0c2698aa5181736bfe",
+    "agent/support_agent/state.py": "64171a4ee763e4bcf3340c074d64700cee87c44fd7a101e9d8440d4bccd3921f",
+    "agent/tools.py": "24363bc3de0ce1cc24e5dff1b3c8ace68cafdee6552a323909ee884439656507"
+  },
+  "scope": {
+    "binding": "3d81f316-16c1-452d-939f-48776870bd23",
+    "branch": "main",
+    "domain": "retail_plus",
+    "language": "python",
+    "task": "t1",
+    "case_ids": null
+  },
+  "real_provider_called": false,
+  "remote_evaluation_executed": false,
+  "pushed": false,
+  "p2_started": false,
+  "semantic_comprehension_verified": false,
+  "limits": {
+    "model_attempts_per_session": 128,
+    "tool_batches_per_user_request": 16,
+    "kind": "engineering defaults; no fee authorization"
+  },
+  "tau2_source_commit": "6e9f34c685d40fa7a9f5935d8970af6fd9d5f118",
+  "known_gaps": [
+    "full name/postal-code verification",
+    "toolkit enforced single-customer binding",
+    "new business operations",
+    "real-model comprehension",
+    "classroom deployed compatibility"
+  ]
+}

@@ -43,7 +43,7 @@
 2026-10-09 安装完成，实际安装包为 `tau2==1.0.1`，核心依赖包含 `litellm==1.82.6`、`openai==2.20.0`、`pydantic==2.14.0`。安装的 Python 可执行文件位于 `E:\Agent-For-Retail-Customer-Service\.venv\Scripts\python.exe`。
 
 - `pip check`：`No broken requirements found`。
-- 既有本地测试：6/6 通过。
+- 初始模板本地测试：6/6 通过（P1 前基线）。P1 后两项正则/固定回复测试随旧模块移除，四项 API/状态测试保留；与新增22项协议测试合计26/26通过，见 [P1 实施记录](P1-IMPLEMENTATION.md)。
 - 本地框架兼容检查：7/7 通过；检查脚本位于已忽略的 `.venv/check_tau2_install.py`。
 
 七项兼容检查实际验证：消息构造和 Pydantic JSON 往返；多个工具结果与 error 标记；本项目现有 toolkit 的真实发现与 schema；context 激活及作用域；action 选择和资源辅助方法；Python gateway 的 `actions` 参数及固定选项注入；固定参数拒绝覆盖和 `one_of` 显式选择要求。

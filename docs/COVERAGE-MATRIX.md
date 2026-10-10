@@ -5,7 +5,7 @@
 ## 当前验证状态
 
 - 本地 tau2 安装接口检查：7/7；既有 t1 模板本地测试：6/6，记录于 [LOCAL-DEVELOPMENT.md](LOCAL-DEVELOPMENT.md)。
-- P1 模型网关及多轮协议骨架已完成，[离线协议检查](P1-IMPLEMENTATION.md) 26/26 通过；新业务工具及真实模型语义能力尚未验证。下表的业务验收仍为计划。
+- 新业务 Agent 尚未实现。下表的业务验收均为计划，不能声称已通过。
 - P0 合成资料检查记录于 [P0-VALIDATION.json](P0-VALIDATION.json)；它验证样本与 schema/引用一致性，不证明 Agent 的业务或语言能力。
 - 当前远程范围保持 `t1 / case_ids:null`；本轮没有提交远程评测。134 项公开需求不是当前一次运行的范围。
 

@@ -1,4 +1,4 @@
-"""Offline API adapter tests; run with the repository virtual environment."""
+"""Offline tests: python3 -m unittest discover -s tests -v (no pip install)."""
 
 import sys
 import unittest
@@ -8,6 +8,7 @@ from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agent"))
 from support_agent.adapters.customer_api import read_customer, verify_and_read_customer
+from support_agent.domain.customer import customer_reply, find_customer_id
 from support_agent.state import initial_state
 
 
@@ -29,10 +30,29 @@ class CustomerTests(unittest.TestCase):
             verify_and_read_customer(api, "customer_a", "")
         api.request.assert_not_called()
 
+    def test_airline_and_retail_identifiers(self):
+        for value in (
+            "developer_traveler_9001",
+            "developer_pending_9001",
+            "developer_delivered_9001",
+            "customer_example",
+        ):
+            self.assertEqual(find_customer_id("Please find " + value), value)
+        self.assertIsNone(find_customer_id("Please cancel my booking"))
+
+    def test_success_and_invalid_tool_responses(self):
+        self.assertIn(
+            "sample@example.test", customer_reply('{"email":"sample@example.test"}')
+        )
+        for content in ("not-json", "null", "[]"):
+            self.assertIn("invalid response", customer_reply(content))
+        self.assertIn("no email", customer_reply("{}"))
+        self.assertIn("could not find", customer_reply("{}", error=True))
+
     def test_no_shared_conversation_state(self):
         first, second = initial_state(), initial_state()
-        first.history.append({"role": "user", "content": "First session"})
-        self.assertEqual(second.history, [])
+        first["customer_id"] = "customer_example"
+        self.assertIsNone(second["customer_id"])
 
     def test_transport_encodes_identifiers_and_checks_status(self):
         response = SimpleNamespace(

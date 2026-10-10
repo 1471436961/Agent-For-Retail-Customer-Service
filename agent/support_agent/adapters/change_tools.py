@@ -10,6 +10,7 @@ from support_agent.domain.money import calculate_values
 from support_agent.adapters.write_api import write_once
 from support_agent.adapters.conversation_api import transfer_once
 from support_agent.domain.plans import order_requests
+from support_agent.domain.receipts import customer_facts
 
 PREPARATION_ACTION_NAMES = ("compare_variants", "calculate", "prepare_change")
 REVIEW_ACTION_NAMES = ("review_change", "invalidate_change")
@@ -155,6 +156,7 @@ class ChangeTools(CustomerTools):
             # turn. Toolkit has no dialogue channel and cannot prove consent.
             proposal["state"] = "attempted"
             outcome = write_once(self.client_api, proposal["facts"])
+            outcome["customer_facts"] = customer_facts(proposal["facts"], outcome)
             proposal["outcome"] = {"proposal_id": proposal_id, **outcome}
             proposal["state"] = outcome["state"]
             if "plan_id" in proposal:

@@ -49,14 +49,17 @@ class RetailAgent:
             return reply, current.model_dump(mode="json")
         if current.model_calls >= self.gateway.limits.max_model_calls:
             return self._stop(current, "model_call_limit")
-        current.model_calls += 1  # Count attempts, including provider failures.
         try:
-            reply = self.gateway.generate(
-                [SystemMessage(role="system", content=SYSTEM_PROMPT, timestamp=None),
-                 *self.gateway.project_history(current.history)]
-            )
+            messages = [SystemMessage(role="system", content=SYSTEM_PROMPT, timestamp=None),
+                        *self.gateway.project_history(current.history)]
         except Exception as error:
-            # Retain only allowlisted type/status, never exception text or args.
+            current.gateway_diagnostic = diagnose_gateway_failure(error, stage="history_projection")
+            return self._stop(current, "gateway_failure")
+        current.model_calls += 1  # Count actual gateway attempts, including failures.
+        try:
+            reply = self.gateway.generate(messages)
+        except Exception as error:
+            # Classify retained broker errors; never expose exception text/args.
             current.gateway_diagnostic = diagnose_gateway_failure(error)
             return self._stop(current, "gateway_failure")
         try:
@@ -84,6 +87,18 @@ class RetailAgent:
     @staticmethod
     def _stop(state, reason):
         state.halt_reason = reason
+        if reason == "gateway_failure":
+            if state.gateway_diagnostic and state.gateway_diagnostic.stage == "history_projection":
+                explanation = "I could not continue because the conversation history could not be prepared for the model."
+            else:
+                explanation = "I could not continue because the model request failed."
+        else:
+            explanation = {
+                "model_call_limit": "I reached the Agent's configured model-call limit for this conversation.",
+                "tool_round_limit": "I reached the Agent's configured tool-round limit for this request.",
+                "invalid_host_sequence": "I could not continue because the received message or tool results did not match the pending conversation step.",
+                "invalid_model_reply": "I could not continue because the model returned an invalid message or tool call.",
+            }.get(reason, "I could not continue because the Agent encountered an internal error.")
         diagnostic = ""
         if reason == "gateway_failure" and state.gateway_diagnostic:
             diagnostic = " Service diagnostic: " + json.dumps(
@@ -92,8 +107,7 @@ class RetailAgent:
         facts = receipt_text(state.receipt_facts_to_display) if state.receipt_facts_to_display else ""
         reply = AssistantMessage(
             role="assistant", timestamp=None,
-            content="I cannot continue automated handling because of a service or protocol limit. "
-                    f"Reason: {reason}." + diagnostic + facts,
+            content=explanation + f" Reason: {reason}." + diagnostic + facts,
         )
         if facts:
             state.receipt_facts_to_display = []

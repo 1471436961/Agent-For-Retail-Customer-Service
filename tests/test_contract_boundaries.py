@@ -18,7 +18,7 @@ from fixtures.write_backend import WriteBackend
 from support_agent.adapters.change_tools import EXECUTE_ACTIONS
 from support_agent.domain.identity import ReadError
 from support_agent.gateway import AgentLimits
-from tau2.data_model.message import MultiToolMessage, ToolMessage, UserMessage
+from tau2.data_model.message import AssistantMessage, MultiToolMessage, ToolCall, ToolMessage, UserMessage
 from tau2.hyper.agent_context import activate_agent_context, build_agent_context
 from tau2.hyper.client_api import ClientAPI, ClientAPIContext
 import test_gateway_wire as wire
@@ -127,6 +127,24 @@ class ContractBoundaryTests(unittest.TestCase):
         self.assertFalse(reply.tool_calls)
         self.assertEqual(state["halt_reason"], "invalid_model_reply")
         self.assertEqual(self.backend.calls, [])
+
+    def test_historical_tool_narration_does_not_count_as_a_displayed_change_review(self):
+        proposal, state = self.reviewed_cancellation()
+        history = state["history"][:-1]
+        narration = state["history"][-1]["content"]
+        history.extend([AssistantMessage(role="assistant", content=narration, tool_calls=[
+            ToolCall(id="historical-catalog", name="list_products", arguments={})]).model_dump(mode="json"),
+            ToolMessage(role="tool", id="historical-catalog", content='{"products":[]}').model_dump(mode="json")])
+        restored = self.agent.get_init_state(history)
+        self.assertEqual(restored["reviewed"], {})
+        self.assertEqual(restored["review_to_display"]["proposal_id"], proposal["proposal_id"])
+        calls = self.provider.call_count
+        reply, restored = self.agent.generate_next_message(
+            UserMessage(role="user", content="Please continue."), restored)
+        self.assertEqual(reply.content, narration)
+        self.assertEqual(self.provider.call_count, calls)
+        self.assertIn(proposal["proposal_id"], restored["reviewed"])
+        self.assertEqual(self.backend.writes(), [])
 
     def test_transfer_metadata_matches_the_mutating_openapi_operation(self):
         spec = json.loads((ROOT / "materials/client_api/openapi.yaml").read_text(encoding="utf-8"))

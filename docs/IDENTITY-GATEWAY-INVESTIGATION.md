@@ -77,3 +77,44 @@ MultiToolMessage 的转换问题。新增测试仅在最终 `tau2.utils.llm_util
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -q
 ```
+
+## 118e46b 首轮失败的继续排查
+
+2026-10-10，已推送 `118e46b7930aa68c38f1ae27409beac4b62d7851`。
+GitHub run `38028056501`，Job `aff86df4-a8de-4204-9b6f-d0f0ad8dae1e`，
+t1 通过 0/1。提交和报告保存步骤成功；实际轨迹首轮返回
+`gateway_failure / RuntimeError`，零工具调用。
+
+检查该任务的 GitHub 日志及附件：只有排队记录、最终报告及 report.json/report.md，
+没有模型调用的 traceback、错误响应或 HTTP 状态。经用户明确授权向 Parallight Lab
+发送三个相关源码文件，查询同一 Job 的本人记录。该接口返回相同 0/1 摘要，明确
+不提供原始响应或完整调用轨迹。公开接口澄清 U1/U2 版本
+`d58e1786ae00` 与 Agent contract `b491f1496768` 支持当前 Python
+`model/messages/actions` 调用方式及省略固定参数的做法；当前公开资料版本不证明
+与本次运行环境完全一致。
+
+已定位的证据丢失链路（本地固定 tau2 源码）：
+
+1. `sandbox/sealed_runner.py::CandidateProcess._model_response` 将宿主异常转为
+   `{type, message}` 错误响应。
+2. `sandbox/candidate_server.py::_brokered_generate` 只用 message 构造 RuntimeError，
+   丢失原异常类型和 status_code 属性。请求参数错误、模型认证错误或响应解析错误
+   均可能成为同一个外层 RuntimeError。
+3. 当前提交的 `diagnose_gateway_failure` 又丢弃 message，只留下外层类型。
+   因而当前报告无法区分这些原因。另一个实现问题是 project_history 与 generate
+   在同一个 try 中，历史转换异常也被标成 gateway_generate。
+
+本次本地改动将历史转换与模型调用分开；只计数实际网关调用。诊断根据真实 SDK
+固定错误格式保留有限原因码、可信模块/函数定位、消息前缀报告的允许异常类型和
+HTTP 状态。`reported_exception_type` 表示错误文本中报告的类型，不声称已恢复
+原始异常对象。不记录任意错误原文、变量名、模型名、URL、客户资料或凭证。
+未识别的 broker 错误明确标为 `unclassified_broker_error`，不擅自推断原因。
+失败继续终止，不自动重试，不替换平台模型或绕过中介。
+
+新增测试经过真实 candidate broker 和宿主错误响应转换，验证宿主参数错误、
+LiteLLM BadRequestError/400、缺失服务端模型配置、未知错误，以及敏感内容过滤、
+状态恢复不重试和历史转换不调用模型。测试错误来自合成宿主，不代表远程已经
+发生其中某一种错误。诊断改动尚未提交/推送，不能把本地测试当成在线评测通过。
+
+本次新增 7 个测试，完整离线测试 138 项通过；提交包审计无错误。在线根因确认
+还需要将诊断版本推送到同一 main/t1 绑定后，读取同一推送任务的实际错误分类。

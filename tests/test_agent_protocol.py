@@ -233,6 +233,28 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(assistant.content, "")
         self.assertNotIn("content", state["history"][-1])
 
+    def test_narrated_historical_call_restores_pending_ids_without_mutating_input(self):
+        assistant = calls_reply(call("historical-lookup"))
+        assistant.content = "I will verify the account using the supplied email."
+        history = [user("The account email is alex.p0@example.test."), assistant]
+        before = [row.model_dump(mode="json") for row in history]
+        state = self.agent.get_init_state(history)
+        self.assertEqual(state["pending_call_ids"], ["historical-lookup"])
+        self.assertEqual(state["history"][-1]["content"], assistant.content)
+        self.provider.return_value = text_reply("Verification completed.")
+        _, final = self.agent.generate_next_message(results(tool_result("historical-lookup")), state)
+        self.assertIsNone(final["halt_reason"])
+        self.assertEqual(final["pending_call_ids"], [])
+        self.assertEqual(before, [row.model_dump(mode="json") for row in history])
+
+    def test_narration_does_not_make_a_malformed_historical_call_valid(self):
+        for invalid in (call(""), call(arguments={"email": 42}), call(name="invented_tool")):
+            with self.subTest(call=invalid):
+                assistant = calls_reply(invalid)
+                assistant.content = "I will check the account."
+                with self.assertRaises(ProtocolError):
+                    self.agent.get_init_state([user(), assistant])
+
     def test_wrong_state_version_or_bound_domain_is_rejected(self):
         state = self.agent.get_init_state()
         state["schema_version"] = 99
@@ -284,14 +306,18 @@ class ProtocolTests(unittest.TestCase):
         self.assert_halt(state, "gateway_failure")
         self.assertEqual(state["model_calls"], 1)
         self.assertNotIn("synthetic-secret", json.dumps(state) + reply.content)
+        self.assertIn("model request failed", reply.content)
+        self.assertNotIn("limit", reply.content)
         self.agent.generate_next_message(user(), state)
         self.provider.assert_called_once()
 
     def test_session_model_budget_counts_attempts(self):
         agent = self.build(self.make_context(limits={"max_model_calls": 1}))
         _, state = agent.generate_next_message(user(), agent.get_init_state())
-        _, final = agent.generate_next_message(user("Another request"), state)
+        reply, final = agent.generate_next_message(user("Another request"), state)
         self.assert_halt(final, "model_call_limit")
+        self.assertIn("Agent's configured model-call limit", reply.content)
+        self.assertNotIn("model request failed", reply.content)
         self.provider.assert_called_once()
 
     def test_tool_round_budget_allows_final_text_but_prevents_another_batch(self):
@@ -302,8 +328,9 @@ class ProtocolTests(unittest.TestCase):
         _, completed = agent.generate_next_message(results(tool_result("a")), state)
         self.assertIsNone(completed["halt_reason"])
         self.provider.return_value = calls_reply(call("b"))
-        _, limited = agent.generate_next_message(results(tool_result("a")), state)
+        reply, limited = agent.generate_next_message(results(tool_result("a")), state)
         self.assert_halt(limited, "tool_round_limit")
+        self.assertIn("Agent's configured tool-round limit", reply.content)
         self.assertEqual(limited["tool_rounds"], 1)
 
     def test_new_user_request_resets_tool_round_counter(self):

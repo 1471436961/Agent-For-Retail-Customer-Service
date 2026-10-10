@@ -115,8 +115,8 @@ def record_reply(state, reply, actions):
         raise ProtocolError("Expected a text assistant or assistant tool batch")
     has_text = bool(reply.content and reply.content.strip())
     calls = reply.tool_calls or []
-    if has_text == bool(calls) or state.pending_call_ids:
-        raise ProtocolError("Text and tool calls must be exclusive")
+    if not (has_text or calls) or state.pending_call_ids:
+        raise ProtocolError("Empty assistant message or unfinished tool batch")
     identifiers = [call.id for call in calls]
     if (any(not identifier.strip() for identifier in identifiers) or
             len(identifiers) != len(set(identifiers)) or
@@ -149,13 +149,17 @@ def record_reply(state, reply, actions):
                     not proposal or proposal["facts"].get("kind") != EXECUTE_ACTIONS[call.name]):
                 raise ProtocolError("Execution requires the exact displayed proposal and later user input")
     if calls:
-        reply.content = None
+        # Historical provider messages can contain narration alongside calls.
+        # Keep that evidence; the live host-facing path removes narration before
+        # recording its reply, as required by the half-duplex orchestrator.
+        if not has_text:
+            reply.content = None
         state.pending_call_ids = identifiers
         state.pending_calls = [call.model_dump(mode="json") for call in calls]
         state.seen_call_ids.extend(identifiers)
         state.tool_rounds += 1
         state.request_tool_rounds += 1
-    if state.review_to_display and has_text:
+    if state.review_to_display and has_text and not calls:
         identifier = state.review_to_display["proposal_id"]
         expected = review_text(state.review_to_display)
         if reply.content != expected + (receipt_text(state.receipt_facts_to_display) if state.receipt_facts_to_display else ""):
@@ -164,7 +168,7 @@ def record_reply(state, reply, actions):
         state.review_to_display = None
     if state.handoff == "accepted" and reply.content != TRANSFER_NOTICE:
         raise ProtocolError("Accepted handoff requires exact notice")
-    if has_text and state.receipt_facts_to_display and state.handoff not in {"accepted", "unknown"}:
+    if has_text and not calls and state.receipt_facts_to_display and state.handoff not in {"accepted", "unknown"}:
         if not reply.content.endswith(receipt_text(state.receipt_facts_to_display)):
             raise ProtocolError("Actual outcome facts must be displayed")
         state.receipt_facts_to_display = []

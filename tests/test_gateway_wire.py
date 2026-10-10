@@ -18,7 +18,7 @@ from fixtures.p2_backend import SyntheticBackend
 from litellm import ModelResponse
 from tau2.hyper.agent_context import activate_agent_context, build_agent_context
 from tau2.hyper.client_api import ClientAPI, ClientAPIContext
-from tau2.data_model.message import MultiToolMessage, ToolMessage, UserMessage
+from tau2.data_model.message import AssistantMessage, MultiToolMessage, ToolCall, ToolMessage, UserMessage
 
 
 def completion(*, arguments=None, content=None, calls=None):
@@ -87,6 +87,52 @@ class GatewayWireTests(unittest.TestCase):
             self.kit.get_tools()[call.name](**call.arguments)
         self.assertEqual([row["path"] for row in self.backend.calls], ["/v1/customers/search"])
 
+    def test_restored_narrated_call_and_actual_result_reach_provider_with_matching_id(self):
+        assistant = AssistantMessage(role="assistant", content="I will verify the account.", tool_calls=[
+            ToolCall(id="restored-verify", name="verify_customer", arguments={
+                "email": "alex.p0@example.test", "claimed_customer_id": "p0_customer_a"})])
+        history = [self.user, assistant]
+        serialized = [row.model_dump(mode="json") for row in history]
+        original = json.dumps(serialized)
+        state = self.agent.get_init_state(serialized)
+        self.assertEqual(self.provider.call_count, 0)
+        self.assertEqual(self.backend.calls, [])
+        call = assistant.tool_calls[0]
+        output = self.kit.get_tools()[call.name](**call.arguments)
+        self.provider.return_value = completion(content="The account email is " + output["email"] + ".")
+        reply, state = self.agent.generate_next_message(MultiToolMessage(role="tool", tool_messages=[
+            ToolMessage(role="tool", id=call.id, content=json.dumps(output))]), state)
+        self.assertIsNone(state["halt_reason"])
+        self.assertIn(output["email"], reply.content)
+        wire = self.provider.call_args.kwargs["messages"]
+        self.assertEqual([row["role"] for row in wire], ["system", "user", "assistant", "tool"])
+        self.assertEqual(wire[-2]["content"], assistant.content)
+        self.assertEqual(wire[-2]["tool_calls"][0]["id"], call.id)
+        self.assertEqual(wire[-1]["tool_call_id"], call.id)
+        self.assertTrue(json.loads(wire[-1]["content"])["ok"])
+        self.assertEqual(original, json.dumps(serialized))
+        self.assertEqual([row["path"] for row in self.backend.calls],
+                         ["/v1/customers/search", "/v1/customers/p0_customer_a"])
+
+    def test_completed_narrated_multi_call_history_preserves_reversed_results_and_errors(self):
+        assistant = AssistantMessage(role="assistant", content="I will check these two read results.",
+            tool_calls=[ToolCall(id="past-profile", name="get_customer_summary", arguments={}),
+                        ToolCall(id="past-catalog", name="list_products", arguments={})])
+        history = [self.user, assistant,
+                   ToolMessage(role="tool", id="past-catalog", content="catalog_unavailable", error=True),
+                   ToolMessage(role="tool", id="past-profile", content='{"email":"actual@example.test"}'),
+                   AssistantMessage(role="assistant", content="The catalog lookup failed.")]
+        state = self.agent.get_init_state([row.model_dump(mode="json") for row in history])
+        self.provider.return_value = completion(content="I can continue with the available account result.")
+        _, state = self.agent.generate_next_message(UserMessage(role="user", content="What did succeed?"), state)
+        self.assertIsNone(state["halt_reason"])
+        wire = self.provider.call_args.kwargs["messages"]
+        self.assertEqual(wire[2]["content"], assistant.content)
+        self.assertEqual([row["tool_call_id"] for row in wire[3:5]], ["past-catalog", "past-profile"])
+        self.assertFalse(json.loads(wire[3]["content"])["ok"])
+        self.assertTrue(json.loads(wire[4]["content"])["ok"])
+        self.assertEqual(state["pending_call_ids"], [])
+
     def test_real_wire_keeps_each_result_in_reversed_multi_tool_batch(self):
         calls = [{"id": "wire-profile", "type": "function", "function": {
                     "name": "get_customer_summary", "arguments": "{}"}},
@@ -124,7 +170,8 @@ class GatewayWireTests(unittest.TestCase):
                           side_effect=TypeError("credential=synthetic-sensitive-payload")) as gateway:
             reply, state = self.agent.generate_next_message(self.user, self.agent.get_init_state())
             self.assertEqual(state["gateway_diagnostic"], {
-                "stage": "gateway_generate", "exception_type": "TypeError", "http_status": None})
+                "stage": "gateway_generate", "exception_type": "TypeError", "http_status": None,
+                "reported_exception_type": None, "origin": None, "failure_code": None})
             self.assertIn('"exception_type": "TypeError"', reply.content)
             self.assertNotIn("synthetic-sensitive", reply.content + json.dumps(state))
             again, restored = self.agent.generate_next_message(self.user, json.loads(json.dumps(state)))

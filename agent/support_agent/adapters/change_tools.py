@@ -11,7 +11,8 @@ from support_agent.adapters.write_api import write_once
 
 PREPARATION_ACTION_NAMES = ("compare_variants", "calculate", "prepare_change")
 REVIEW_ACTION_NAMES = ("review_change", "invalidate_change")
-EXECUTE_ACTIONS = {"execute_default_address": "default_address", "execute_order_address": "order_address", "execute_cancellation": "cancel"}
+EXECUTE_ACTIONS = {"execute_default_address": "default_address", "execute_order_address": "order_address", "execute_cancellation": "cancel",
+                   "execute_payment": "payment", "execute_item_modification": "modify_items", "execute_return": "return", "execute_exchange": "exchange"}
 ACTION_NAMES = (*READ_ACTION_NAMES, *PREPARATION_ACTION_NAMES, *REVIEW_ACTION_NAMES, *EXECUTE_ACTIONS)
 
 
@@ -73,6 +74,10 @@ class ChangeTools(CustomerTools):
         New preparation supersedes any unattempted proposal for the same target.
         """
         with self._lock:
+            self._customer_id()
+            target = parameters.get("order_id") if kind != "default_address" else None
+            if any(p["state"] in {"attempted", "unknown"} and p["facts"]["order_id"] == target for p in self._proposals.values()):
+                raise ReadError("unresolved_write_requires_inspection_no_new_write")
             facts = prepare(self, kind, deepcopy(parameters))
             identifier = f"proposal-{len(self._proposals) + 1}"
             for previous in self._proposals.values():
@@ -163,3 +168,43 @@ class ChangeTools(CustomerTools):
         gift card immediately. Failed/unknown is not a successful cancellation.
         """
         return self._execute(proposal_id, "cancel")
+
+    @is_tool(ToolType.WRITE)
+    def execute_payment(self, proposal_id: str) -> dict:
+        """Execute the approved pending-order payment replacement once.
+
+        One different saved method covers the entire original charge; successful
+        replacement charges it and refunds the original charge. Decline is not
+        success. Explain card/PayPal 3–6 working days or immediate gift refund.
+        """
+        return self._execute(proposal_id, "payment")
+
+    @is_tool(ToolType.WRITE)
+    def execute_item_modification(self, proposal_id: str) -> dict:
+        """Execute the approved COMPLETE pending item list as ONE request.
+
+        Wait for the customer's response to the recap's final completeness
+        question. Never split, deduplicate or append after submission. The saved
+        settlement choice pays/refunds the computed difference. No quantity edit.
+        """
+        return self._execute(proposal_id, "modify_items")
+
+    @is_tool(ToolType.WRITE)
+    def execute_return(self, proposal_id: str) -> dict:
+        """Submit the approved COMPLETE delivered-item return list once.
+
+        Uses original payment or eligible preexisting saved gift card as prepared.
+        accepted means application received, not money already refunded. Do not
+        append items, assert payment arrival or invent a refund timing guarantee.
+        """
+        return self._execute(proposal_id, "return")
+
+    @is_tool(ToolType.WRITE)
+    def execute_exchange(self, proposal_id: str) -> dict:
+        """Submit the approved COMPLETE delivered exchange mapping once.
+
+        One saved method settles the difference; it need not be original payment.
+        accepted means application received, not settlement or shipping complete.
+        Never append, change the confirmed destination or infer hidden line IDs.
+        """
+        return self._execute(proposal_id, "exchange")

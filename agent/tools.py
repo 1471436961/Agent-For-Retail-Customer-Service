@@ -4,4 +4,4 @@ from support_agent.adapters.customer_tools import CustomerTools
 
 
 class Tools(CustomerTools):
-    """Expose session-authorized customer, owned-order and catalog read tools."""
+    """Expose the application's read-only customer tools to the environment."""

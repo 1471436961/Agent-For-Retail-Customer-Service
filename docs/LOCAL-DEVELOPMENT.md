@@ -45,7 +45,6 @@
 - `pip check`：`No broken requirements found`。
 - 初始模板本地测试：6/6 通过（P1 前基线）。P1 后两项正则/固定回复测试随旧模块移除，四项 API/状态测试保留；与新增22项协议测试合计26/26通过，见 [P1 实施记录](P1-IMPLEMENTATION.md)。
 - 本地框架兼容检查：7/7 通过；检查脚本位于已忽略的 `.venv/check_tau2_install.py`。
-- P2当前测试61/61通过。兼容探针已适配九个只读工具并再次通过7/7；见 [P2实施记录](P2-IMPLEMENTATION.md)。P2使用已有Pydantic与标准库，不需在远程运行时安装依赖。
 
 七项兼容检查实际验证：消息构造和 Pydantic JSON 往返；多个工具结果与 error 标记；本项目现有 toolkit 的真实发现与 schema；context 激活及作用域；action 选择和资源辅助方法；Python gateway 的 `actions` 参数及固定选项注入；固定参数拒绝覆盖和 `one_of` 显式选择要求。
 

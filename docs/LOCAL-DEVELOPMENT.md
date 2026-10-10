@@ -40,6 +40,8 @@
 
 ## 验证记录
 
+2026-10-10 更新：P7实际111/111通过，兼容探针已更新当前27个工具并通过7/7。执行 `.\.venv\Scripts\python.exe scripts/verify-offline.py` 会运行离线测试和 agent/ 静态审计、生成 [P7-VALIDATION.json](P7-VALIDATION.json)。仅标准库、已有 tau2 和 Pydantic；没有安装新依赖或运行付费provider。公开需求索引可用 `python scripts/build-requirement-coverage.py` 从已确认的仓库外目录重建，索引不参与运行包。
+
 2026-10-09 安装完成，实际安装包为 `tau2==1.0.1`，核心依赖包含 `litellm==1.82.6`、`openai==2.20.0`、`pydantic==2.14.0`。安装的 Python 可执行文件位于 `E:\Agent-For-Retail-Customer-Service\.venv\Scripts\python.exe`。
 
 - `pip check`：`No broken requirements found`。

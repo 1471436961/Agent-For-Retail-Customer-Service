@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT / "agent"))
 from agent import create_agent
 from tools import Tools
 from support_agent.state import ProtocolError
-from support_agent.adapters.customer_tools import READ_ACTION_NAMES
+from support_agent.adapters.change_tools import ACTION_NAMES
 from tau2.data_model.message import (
     AssistantMessage, MultiToolMessage, ToolCall, ToolMessage, UserMessage,
 )
@@ -128,7 +128,7 @@ class ProtocolTests(unittest.TestCase):
             self.agent.generate_next_message(user(), self.agent.get_init_state())
         kwargs = gateway.call_args.kwargs
         self.assertEqual(kwargs["model"], "offline_model")
-        self.assertEqual(kwargs["actions"], self.context.action_interface.select(READ_ACTION_NAMES))
+        self.assertEqual(kwargs["actions"], self.context.action_interface.select(ACTION_NAMES))
         self.assertNotIn("max_tokens", kwargs)
         self.agent.generate_next_message(user(), self.agent.get_init_state())
         self.assertEqual(self.provider.call_args.kwargs["max_tokens"], 1024)

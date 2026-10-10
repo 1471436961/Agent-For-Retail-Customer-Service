@@ -24,6 +24,9 @@ ProviderErrorCode = Literal[
     "insufficient_quota", "rate_limit_exceeded", "rate_limit_error",
     "tokens", "requests", "resource_exhausted", "RESOURCE_EXHAUSTED",
     "model_rate_limit", "too_many_requests", "overloaded_error",
+    "model_quota_exceeded", "model_quota_exhausted", "quota_exceeded",
+    "quota_not_configured", "model_quota_not_configured", "budget_exceeded",
+    "insufficient_credits", "quota_error",
 ]
 
 # A vocabulary of infrastructure concepts, not a redacted copy of a response.
@@ -45,7 +48,8 @@ class GatewayDiagnostic(BaseModel):
     provider_error_code: ProviderErrorCode | None = None
     provider_message_terms: list[ProviderTerm] = Field(default_factory=list)
     rate_limit_kind: Literal[
-        "account_quota", "token_rate", "request_rate", "concurrency", "upstream_capacity",
+        "account_quota", "model_quota", "quota_configuration", "budget",
+        "token_rate", "request_rate", "concurrency", "upstream_capacity",
     ] | None = None
     origin: Literal[
         "model_broker", "gateway_constraints", "gateway_accounting",
@@ -159,11 +163,20 @@ def diagnose_gateway_failure(error, *, stage="gateway_generate"):
         # Inspect only a recognized provider error. Retain fixed labels rather
         # than arbitrary message/body text, which can contain account IDs/keys.
         known_codes = get_args(ProviderErrorCode)
-        for match in re.finditer(r"[\"'](?:code|type)[\"']\s*:\s*[\"']([A-Za-z_]+)[\"']", text):
+        for match in re.finditer(r"[\"'](?:code|type|error)[\"']\s*:\s*[\"']([A-Za-z_]+)[\"']", text):
             if match[1] in known_codes:
                 provider_code = match[1]
                 break
         lower = text.lower()
+        # Some gateways put a fixed error symbol in detail/message rather than
+        # OpenAI's error.code. Recognize only the same closed vocabulary.
+        if provider_code is None:
+            for symbol in known_codes:
+                if symbol in {"tokens", "requests"}:
+                    continue  # Plain prose is not a provider error code.
+                if re.search(r"(?<![A-Za-z0-9_])" + re.escape(symbol) + r"(?![A-Za-z0-9_])", text):
+                    provider_code = symbol
+                    break
         words = set(re.findall(r"[a-z]+", lower))
         forms = {
             "quota": ("quota", "额度", "配额"), "credits": ("credit", "credits"),
@@ -179,7 +192,15 @@ def diagnose_gateway_failure(error, *, stage="gateway_generate"):
         }
         terms = [label for label, variants in forms.items()
                  if any(value in words if value.isascii() else value in lower for value in variants)]
-        if provider_code == "insufficient_quota" or "exceeded your current quota" in lower:
+        if (provider_code in {"model_quota_exceeded", "model_quota_exhausted"} or
+                "model quota exceeded" in lower or "model quota exhausted" in lower):
+            rate_kind = "model_quota"
+        elif (provider_code in {"quota_not_configured", "model_quota_not_configured"} or
+                "model quota not configured" in lower):
+            rate_kind = "quota_configuration"
+        elif provider_code == "budget_exceeded":
+            rate_kind = "budget"
+        elif provider_code in {"insufficient_quota", "insufficient_credits"} or "exceeded your current quota" in lower:
             rate_kind = "account_quota"
         elif provider_code == "tokens" or "tokens per min" in lower or "tokens per minute" in lower:
             rate_kind = "token_rate"

@@ -47,3 +47,18 @@ Job bffe1dd9-79e3-4b95-8404-ea49686aeb55 / GitHub run 38041022408，t1 0/1。
 记录允许模型数量和所选择 option 的名称，用来核对是否只有该默认别名、
 是否选择过可选配置。防止历史投影失败错误显示上一轮的请求摘要。
 164 项回归测试通过（15.592 秒），不额外进行本地付费调用。
+
+## 6edf1fe 实际平台结果及后续诊断
+
+Job 467315b7-afa0-4512-ac4a-f48df165885e / GitHub run 38041779447，t1 0/1。
+仍为第 1 次 openai/enterprise-haiku 调用，2 消息、3 动作、4,079 字节，
+教师 max_tokens=1024。允许模型数量确实为 1，one_of 选择参数为空。
+429 原始异常识别出的固定概念为 quota、model；没有业务工具轨迹。
+用户工作台未显示此绑定的配额详情，Chrome 控制重连后仍无法读取。
+
+继续支持网关将固定错误码放在 error/detail 的形状，包括
+model_quota_exceeded、model_quota_not_configured、budget_exceeded 等。
+普通 requests/tokens 文字不能当作机器错误码；固定 Model quota exceeded
+文字只分类为模型配额，不虚构 provider_error_code。只输出闭合标签。
+完整回归 165 项通过（13.269 秒），最终诊断针对测试 11 项通过（0.668 秒）。
+模型名始终取自注入网关，未修改配额、token 固定值、绑定或评测范围。

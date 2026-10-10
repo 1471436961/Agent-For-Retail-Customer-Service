@@ -175,6 +175,32 @@ def record_reply(state, reply, actions):
     store(state, reply)
 
 
+def normalize_call_ids(state, reply):
+    """Keep valid provider IDs; namespace IDs reused after a completed call.
+
+    Providers can restart their ID sequence on a later completion. Host and
+    model history must see the same canonical ID. Never change a pending ID,
+    infer intent, or mutate the provider's message object.
+    """
+    if not isinstance(reply, AssistantMessage) or not reply.tool_calls:
+        return reply
+    ids = [call.id for call in reply.tool_calls]
+    # Malformed IDs within this response remain protocol errors.
+    if any(not identifier.strip() for identifier in ids) or len(ids) != len(set(ids)):
+        return reply
+    taken = set(state.seen_call_ids) | set(ids)
+    calls = []
+    for index, call in enumerate(reply.tool_calls):
+        if call.id in state.seen_call_ids:
+            identifier = f"agent-call-{state.tool_rounds + 1}-{index}"
+            while identifier in taken:
+                identifier += "-next"
+            taken.add(identifier)
+            call = call.model_copy(update={"id": identifier})
+        calls.append(call)
+    return reply.model_copy(update={"tool_calls": calls})
+
+
 def review_text(proposal):
     facts = proposal["facts"]
     recap = {key: value for key, value in facts.items() if key != "snapshot"}

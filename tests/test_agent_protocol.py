@@ -210,11 +210,73 @@ class ProtocolTests(unittest.TestCase):
                 self.assertFalse(reply.tool_calls)
                 self.transport.assert_not_called()
 
-    def test_reused_call_id_is_rejected(self):
+    def test_reused_provider_call_id_is_normalized_before_host_execution(self):
         state = self.pending()
         self.provider.return_value = calls_reply(call())
-        _, final = self.agent.generate_next_message(results(tool_result()), state)
-        self.assert_halt(final, "invalid_model_reply")
+        reply, final = self.agent.generate_next_message(results(tool_result()), state)
+        self.assertIsNone(final["halt_reason"])
+        self.assertNotEqual(reply.tool_calls[0].id, "lookup_1")
+        self.assertEqual(reply.tool_calls[0].arguments, call().arguments)
+        self.assertEqual(self.provider.return_value.tool_calls[0].id, "lookup_1")
+        self.provider.return_value = text_reply("Read completed.")
+        _, final = self.agent.generate_next_message(results(tool_result(reply.tool_calls[0].id)), final)
+        self.assertIsNone(final["halt_reason"])
+        projected = self.provider.call_args.kwargs["messages"]
+        self.assertEqual(projected[-1].id, projected[-2].tool_calls[0].id)
+
+    def test_invalid_parameters_get_one_model_correction_without_fake_tool_results(self):
+        self.provider.side_effect = [
+            calls_reply(call(arguments={"customer_id": "", "email": 42})),
+            calls_reply(call("corrected")),
+        ]
+        reply, state = self.agent.generate_next_message(user(), self.agent.get_init_state())
+        self.assertIsNone(state["halt_reason"])
+        self.assertEqual(state["model_calls"], 2)
+        self.assertEqual(state["tool_rounds"], 1)
+        self.assertEqual(state["pending_call_ids"], ["corrected"])
+        self.assertEqual(reply.tool_calls[0].id, "corrected")
+        self.transport.assert_not_called()
+        messages = self.provider.call_args.kwargs["messages"]
+        self.assertEqual(messages[-1].role, "system")
+        self.assertIn("before any tool was executed", messages[-1].content)
+        self.assertFalse(any(row.role == "tool" for row in messages))
+        self.assertEqual(len(state["history"]), 2)
+
+    def test_repeated_invalid_reply_stops_after_one_correction(self):
+        self.provider.return_value = calls_reply(call(arguments={"customer_id": "", "email": 42}))
+        _, state = self.agent.generate_next_message(user(), self.agent.get_init_state())
+        self.assert_halt(state, "invalid_model_reply")
+        self.assertEqual(self.provider.call_count, 2)
+        self.assertEqual(state["tool_rounds"], 0)
+        self.transport.assert_not_called()
+
+    def test_correction_never_exceeds_configured_model_call_limit(self):
+        agent = self.build(self.make_context(limits={"max_model_calls": 1}))
+        self.provider.return_value = calls_reply(call(arguments={"customer_id": "", "email": 42}))
+        _, state = agent.generate_next_message(user(), agent.get_init_state())
+        self.assert_halt(state, "invalid_model_reply")
+        self.assertEqual(self.provider.call_count, 1)
+        self.assertEqual(state["model_calls"], 1)
+
+    def test_parallel_verification_is_corrected_before_any_dependent_read(self):
+        self.provider.side_effect = [calls_reply(call("verify"), call("details", name="get_customer_summary", arguments={})),
+                                    calls_reply(call("verify-corrected"))]
+        reply, state = self.agent.generate_next_message(user(), self.agent.get_init_state())
+        self.assertIsNone(state["halt_reason"])
+        self.assertEqual([c.name for c in reply.tool_calls], ["lookup_customer"])
+        self.assertEqual(state["pending_call_ids"], ["verify-corrected"])
+        self.assertEqual(state["tool_rounds"], 1)
+        self.transport.assert_not_called()
+
+    def test_correction_cannot_fabricate_approval_for_an_unreviewed_write(self):
+        self.provider.side_effect = [calls_reply(call("unapproved", name="execute_default_address", arguments={"proposal_id": "proposal-1"})),
+                                    text_reply("Please review the proposed address change before approving it.")]
+        reply, state = self.agent.generate_next_message(user(), self.agent.get_init_state())
+        self.assertIsNone(state["halt_reason"])
+        self.assertFalse(reply.tool_calls)
+        self.assertEqual(state["reviewed"], {})
+        self.assertEqual(state["tool_rounds"], 0)
+        self.transport.assert_not_called()
 
     def test_history_restores_pending_calls_and_original_user_text(self):
         history = [user("Earlier I gave a different email."), calls_reply(call("restore"))]

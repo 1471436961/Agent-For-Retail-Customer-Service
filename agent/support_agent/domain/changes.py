@@ -106,6 +106,38 @@ def _method(profile, identifier):
     return found[0]
 
 
+def execution_evidence(facts):
+    """Compare the confirmed operation, excluding unrelated profile changes.
+
+    prepare() rechecks identity, ownership, eligibility and sufficient funds on
+    every execution. This projection additionally binds relevant recorded facts
+    and quoted amounts to the approved version, without treating the customer's
+    entire account as an atomic snapshot.
+    """
+    kind = facts["kind"]
+    evidence = {key: deepcopy(facts[key]) for key in
+                ("kind", "customer_id", "order_id", "body", "calculations", "instance_selection")}
+    profile, order = facts["snapshot"]["profile"], facts["snapshot"]["order"]
+    if kind == "default_address":
+        evidence["previous_address"] = profile["default_shipping_address"]
+    else:
+        evidence["status"] = order["status"]
+        if kind in {"order_address", "exchange"}:
+            evidence["previous_address"] = order["shipping_address"]
+        if kind in {"cancel", "modify_items", "return", "exchange"}:
+            evidence["items"] = order["items"]
+        if kind in {"cancel", "payment", "modify_items", "return", "exchange"}:
+            evidence["payments"] = order["payments"]
+    method_ids = {facts["body"][key] for key in ("payment_method_id", "refund_payment_method_id")
+                  if key in facts["body"]}
+    method_ids.update(row["payment_method_id"] for row in facts["calculations"]
+                      if "payment_method_id" in row)
+    evidence["methods"] = {method["id"]: {key: value for key, value in method.items() if key != "balance"}
+                           for method in profile["payment_methods"] if method["id"] in method_ids}
+    evidence["catalog"] = facts["snapshot"]["catalog"]
+    return evidence
+
+
 def _balance(method, amount):
     require(method["source"] != "gift_card" or method["balance"] >= max(amount, 0), "insufficient_gift_balance")
 

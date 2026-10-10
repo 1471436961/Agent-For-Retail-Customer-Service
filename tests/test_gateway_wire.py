@@ -46,6 +46,44 @@ class GatewayWireTests(unittest.TestCase):
         self.provider = self.enterContext(patch("tau2.utils.llm_utils.completion"))
         self.enterContext(patch("tau2.utils.llm_utils.get_response_cost", return_value=0))
 
+    def test_reused_provider_id_has_matching_results_in_both_wire_rounds(self):
+        customer = self.backend.records["customers"][0]
+        self.provider.side_effect = [completion(arguments={"email": customer["email"]}),
+                                    completion(arguments={"email": customer["email"]}),
+                                    completion(content="The account email is " + customer["email"])]
+        reply, state = self.agent.generate_next_message(self.user, self.agent.get_init_state())
+        ids = []
+        for _ in range(2):
+            call = reply.tool_calls[0]
+            ids.append(call.id)
+            output = self.kit.get_tools()[call.name](**call.arguments)
+            reply, state = self.agent.generate_next_message(MultiToolMessage(role="tool", tool_messages=[
+                ToolMessage(role="tool", id=call.id, content=json.dumps(output))]), state)
+            self.assertIsNone(state["halt_reason"])
+        self.assertEqual(len(set(ids)), 2)
+        wire = self.provider.call_args.kwargs["messages"]
+        call_ids = [call["id"] for message in wire for call in message.get("tool_calls", [])]
+        result_ids = [message["tool_call_id"] for message in wire if message["role"] == "tool"]
+        self.assertEqual(call_ids, ids)
+        self.assertEqual(result_ids, ids)
+
+    def test_preparation_and_plan_wire_schemas_include_complete_field_shapes(self):
+        self.provider.return_value = completion(content="Please identify your account.")
+        self.agent.generate_next_message(self.user, self.agent.get_init_state())
+        schemas = {t["function"]["name"]: t["function"]["parameters"]
+                   for t in self.provider.call_args.kwargs["tools"]}
+        for name in ("prepare_change", "plan_changes"):
+            schema = schemas[name]
+            definitions = schema["$defs"]
+            self.assertEqual(definitions["Address"]["required"],
+                             ["address_line_1", "city", "region", "country", "postal_code"])
+            self.assertTrue(definitions["CancellationParameters"]["additionalProperties"] is False)
+            self.assertEqual(definitions["ReplacementParameters"]["required"],
+                             ["order_id", "payment_method_id", "replacements", "preserve_options"])
+            self.assertEqual(definitions["ItemReplacement"]["required"],
+                             ["existing_item_id", "replacement_item_id"])
+            self.assertIn("refund_payment_method_id", definitions["ReturnParameters"]["required"])
+
     def test_real_wire_host_verification_then_customer_facts(self):
         customer = self.backend.records["customers"][0]
         gift = next(m for m in customer["payment_methods"] if m["source"] == "gift_card")

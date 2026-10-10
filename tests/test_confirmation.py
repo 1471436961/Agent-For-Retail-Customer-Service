@@ -125,6 +125,30 @@ class ConfirmationTests(unittest.TestCase):
             self.kit.execute_default_address(p["proposal_id"])
         self.assertEqual(self.backend.writes(), [])
 
+    def test_unrelated_profile_changes_do_not_invalidate_confirmed_address(self):
+        p = self.reviewed()
+        customer = self.backend.records["customers"][0]
+        customer["order_ids"].append("#UNRELATED-NEW-ORDER")
+        gift = next(m for m in customer["payment_methods"] if m["source"] == "gift_card")
+        gift["balance"] += 1
+        out, _ = self.host(self.decision(user("I confirm this address."), "execute_default_address", {"proposal_id": p["proposal_id"]}))
+        self.assertEqual(out["state"], "completed")
+        self.assertEqual(len(self.backend.writes()), 1)
+
+    def test_profile_default_address_change_does_not_invalidate_order_address(self):
+        p = self.reviewed("order_address", {"order_id": "#P0-PENDING", "address": self.address})
+        self.backend.records["customers"][0]["default_shipping_address"]["city"] = "Unrelated profile address"
+        out, _ = self.host(self.decision(user("I confirm the order address."), "execute_order_address", {"proposal_id": p["proposal_id"]}))
+        self.assertEqual(out["state"], "completed")
+        self.assertEqual(len(self.backend.writes()), 1)
+
+    def test_relevant_order_address_change_still_invalidates_confirmation(self):
+        p = self.reviewed("order_address", {"order_id": "#P0-PENDING", "address": self.address})
+        self.backend.records["orders"][0]["shipping_address"]["city"] = "Changed by another channel"
+        with self.assertRaisesRegex(ReadError, "facts_changed"):
+            self.kit.execute_order_address(p["proposal_id"])
+        self.assertEqual(self.backend.writes(), [])
+
     def test_cancel_whole_order_and_keep_individual_original_refunds(self):
         p = self.reviewed("cancel", {"order_id": "#P0-PENDING", "reason": "ordered by mistake"})
         out, _ = self.host(self.decision(user("Please cancel that entire order."), "execute_cancellation", {"proposal_id": p["proposal_id"]}))

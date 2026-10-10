@@ -80,6 +80,14 @@ class GatewayFailureTests(unittest.TestCase):
         self.assertEqual(again.content, reply.content)
         self.assertEqual(restored["gateway_diagnostic"], diagnostic)
 
+    def test_reported_rate_limit_stops_before_any_business_tools_or_model_retry(self):
+        reply, state, _ = self.through_broker(RuntimeError(
+            "litellm.RateLimitError: OpenAIException - Error code: 429 - sensitive-provider-body"))
+        self.assertEqual(state["gateway_diagnostic"]["http_status"], 429)
+        self.assertEqual(state["gateway_diagnostic"]["failure_code"], "provider_rate_limit")
+        self.assertEqual(state["tool_rounds"], 0)
+        self.assertNotIn("sensitive-provider-body", reply.content)
+
     def test_broker_sdk_parameter_failure_retains_cause_without_parameter_values(self):
         reply, state, _ = self.through_broker(ValueError(
             "Candidate model request contains unsupported arguments: sensitive-parameter"))

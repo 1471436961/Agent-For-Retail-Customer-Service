@@ -1,9 +1,9 @@
-"""One model decision per host turn; the host alone executes requested tools."""
+"""Host-executed tools with one bounded correction of an invalid model reply."""
 
 from support_agent.gateway import GatewayAdapter
 from support_agent.prompts import SYSTEM_PROMPT
 from support_agent.state import (
-    ProtocolError, SessionState, initial_state, receive, record_reply, restore_history, review_text, receipt_text, store,
+    ProtocolError, SessionState, initial_state, receive, record_reply, restore_history, review_text, receipt_text, store, normalize_call_ids,
 )
 from tau2.data_model.message import AssistantMessage, SystemMessage
 from support_agent.adapters.conversation_api import TRANSFER_NOTICE
@@ -55,27 +55,40 @@ class RetailAgent:
         except Exception as error:
             current.gateway_diagnostic = diagnose_gateway_failure(error, stage="history_projection")
             return self._stop(current, "gateway_failure")
-        current.model_calls += 1  # Count actual gateway attempts, including failures.
-        try:
-            reply = self.gateway.generate(messages)
-        except Exception as error:
-            # Classify retained broker errors; never expose exception text/args.
-            current.gateway_diagnostic = diagnose_gateway_failure(error)
-            return self._stop(current, "gateway_failure")
-        try:
-            if isinstance(reply, AssistantMessage) and reply.tool_calls and reply.content:
-                # Provider responses may include narration alongside calls. The
-                # host receives only the calls; no unexecuted claim is displayed.
-                reply = reply.model_copy(update={"content": None})
-            if (isinstance(reply, AssistantMessage) and reply.tool_calls and
-                    current.request_tool_rounds >= self.gateway.limits.max_tool_rounds):
-                return self._stop(current, "tool_round_limit")
-            if isinstance(reply, AssistantMessage) and not reply.tool_calls and reply.content and current.receipt_facts_to_display:
-                reply = reply.model_copy(update={"content": reply.content + receipt_text(current.receipt_facts_to_display)})
-            record_reply(current, reply, self.gateway.actions_by_name)
-        except ProtocolError:
-            return self._stop(current, "invalid_model_reply")
-        return reply, current.model_dump(mode="json")
+        for attempt in range(2):
+            current.model_calls += 1  # Count attempts, including corrections/failures.
+            try:
+                reply = self.gateway.generate(messages)
+            except Exception as error:
+                # Provider failures are not retried by the Agent.
+                current.gateway_diagnostic = diagnose_gateway_failure(error)
+                return self._stop(current, "gateway_failure")
+            try:
+                reply = normalize_call_ids(current, reply)
+                if isinstance(reply, AssistantMessage) and reply.tool_calls and reply.content:
+                    reply = reply.model_copy(update={"content": None})
+                if (isinstance(reply, AssistantMessage) and reply.tool_calls and
+                        current.request_tool_rounds >= self.gateway.limits.max_tool_rounds):
+                    return self._stop(current, "tool_round_limit")
+                if isinstance(reply, AssistantMessage) and not reply.tool_calls and reply.content and current.receipt_facts_to_display:
+                    reply = reply.model_copy(update={"content": reply.content + receipt_text(current.receipt_facts_to_display)})
+                candidate = current.model_copy(deep=True)
+                record_reply(candidate, reply, self.gateway.actions_by_name)
+            except ProtocolError as error:
+                if attempt == 0 and current.model_calls < self.gateway.limits.max_model_calls:
+                    # A local validation rejection executed nothing. Correct it
+                    # using genuine history + trusted feedback, never fake tool
+                    # results or a fabricated customer approval. Error text here
+                    # consists only of our fixed ProtocolError descriptions.
+                    messages = [*messages, SystemMessage(role="system", timestamp=None,
+                        content="Your proposed reply was rejected before any tool was executed: " + str(error) +
+                        ". Return a corrected reply using the supplied schemas and actual history. "
+                        "Verification and dependent actions require separate batches. "
+                        "A write still requires the exact displayed proposal and later clear customer approval. "
+                        "If approval or information is missing, ask the customer. No rejected call has taken effect.")]
+                    continue
+                return self._stop(current, "invalid_model_reply")
+            return reply, candidate.model_dump(mode="json")
 
     @staticmethod
     def _handoff_reply(state):

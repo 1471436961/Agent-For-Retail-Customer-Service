@@ -78,7 +78,7 @@ def write_once(api, facts):
             raise ValueError("Mismatched receipt target")
         if facts["kind"] in {"default_address", "order_address"}:
             key = "default_shipping_address" if facts["kind"] == "default_address" else "shipping_address"
-            if Address.model_validate(actual[key]) != Address.model_validate(facts["body"]):
+            if canonical_address(actual[key]) != canonical_address(facts["body"]):
                 raise ValueError("Mismatched receipt address")
         if facts["kind"] == "cancel" and actual["cancellation"] != facts["body"]:
             raise ValueError("Mismatched receipt reason")
@@ -86,6 +86,18 @@ def write_once(api, facts):
     except (ValueError, TypeError, KeyError, ValidationError):
         return {"state": "unknown", "operation": operation, "error": "invalid_write_receipt"}
     return {"state": "accepted" if facts["kind"] in {"return", "exchange"} else "completed", "operation": operation, "receipt": deepcopy(actual)}
+
+
+def canonical_address(value):
+    """Match the REST adapter's optional second-line normalization only.
+
+    The reference API converts missing/null address_line_2 to legacy address2
+    "" and returns that empty string. Every other field and any nonempty second
+    line must still match exactly; no address guessing or general normalization.
+    """
+    address = Address.model_validate(value).model_dump()
+    address["address_line_2"] = address["address_line_2"] or ""
+    return address
 
 
 def validate_financial_receipt(facts, actual):

@@ -4,13 +4,14 @@ from typing import Literal
 from tau2.environment.toolkit import ToolType, is_tool
 from support_agent.adapters.customer_tools import CustomerTools, READ_ACTION_NAMES
 from support_agent.domain.catalog import compare
-from support_agent.domain.changes import prepare
+from support_agent.domain.changes import prepare, execution_evidence
 from support_agent.domain.identity import ReadError
 from support_agent.domain.money import calculate_values
 from support_agent.adapters.write_api import write_once
 from support_agent.adapters.conversation_api import transfer_once
 from support_agent.domain.plans import order_requests
 from support_agent.domain.receipts import customer_facts
+from support_agent.adapters.change_parameters import ChangeParameters, PlanRequest
 
 PREPARATION_ACTION_NAMES = ("compare_variants", "calculate", "prepare_change")
 REVIEW_ACTION_NAMES = ("review_change", "invalidate_change")
@@ -75,7 +76,7 @@ class ChangeTools(CustomerTools):
         return calculate_values(operation, values)
 
     @is_tool(ToolType.READ)
-    def prepare_change(self, kind: Literal["default_address", "order_address", "cancel", "payment", "modify_items", "return", "exchange"], parameters: dict) -> dict:
+    def prepare_change(self, kind: Literal["default_address", "order_address", "cancel", "payment", "modify_items", "return", "exchange"], parameters: ChangeParameters) -> dict:
         """Prepare exactly one complete change, without performing any write.
 
         parameters: address kinds need the complete address object; order kinds
@@ -149,7 +150,7 @@ class ChangeTools(CustomerTools):
             if proposal["state"] != "prepared":
                 raise ReadError("proposal_not_prepared")
             current = prepare(self, kind, proposal["parameters"])
-            if current != proposal["facts"]:
+            if execution_evidence(current) != execution_evidence(proposal["facts"]):
                 proposal["state"] = "stale"
                 raise ReadError("facts_changed_prepare_and_confirm_again")
             # Agent protocol independently enforces actual recap + later user
@@ -233,7 +234,7 @@ class ChangeTools(CustomerTools):
         return self._execute(proposal_id, "exchange")
 
     @is_tool(ToolType.READ)
-    def plan_changes(self, requests: list[dict]) -> dict:
+    def plan_changes(self, requests: list[PlanRequest]) -> dict:
         """Build a serial plan from already clarified explicit customer requests.
 
         Each entry is {kind, parameters}. Per-order address/payment precede

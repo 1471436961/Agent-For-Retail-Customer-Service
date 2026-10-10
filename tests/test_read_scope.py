@@ -316,11 +316,8 @@ class ReadScopeTests(unittest.TestCase):
 
     def test_registered_tools_offer_no_direct_customer_or_write_backdoor(self):
         tools = self.kit.get_tools()
-        self.assertTrue(set(READ_ACTION_NAMES).issubset(tools))
-        self.assertTrue(all(tools[name].info["tool_type"] == "read" for name in READ_ACTION_NAMES))
-        for name, tool in tools.items():
-            if tool.info["tool_type"] == "write":
-                self.assertEqual(set(tool.params.model_json_schema()["properties"]), {"proposal_id"})
+        self.assertEqual(set(tools), set(READ_ACTION_NAMES))
+        self.assertTrue(all(tool.info["tool_type"] == "read" for tool in tools.values()))
         for name in ("get_customer_summary", "list_customer_orders", "get_owned_order"):
             self.assertNotIn("customer_id", tools[name].params.model_json_schema()["properties"])
         self.verify()

@@ -193,6 +193,21 @@ class T1RepairTests(unittest.TestCase):
         self.assertEqual(reply.content, "email: " + self.case["email"])
         self.assertEqual(len(self.requests), before)
 
+    def test_legacy_lookup_history_survives_removal_from_live_catalog(self):
+        profile = self.kit.lookup_customer(self.case["customer_id"], self.case["email"])
+        history = [self.user, AssistantMessage(role="assistant", tool_calls=[
+            ToolCall(id="legacy-lookup", name="lookup_customer", arguments={
+                "customer_id": self.case["customer_id"], "email": self.case["email"]})]),
+            MultiToolMessage(role="tool", tool_messages=[ToolMessage(
+                role="tool", id="legacy-lookup", content=json.dumps(profile))])]
+        self.state = self.agent.get_init_state(history)
+        reply = self.decide(UserMessage(role="user", content="Please repeat the verified email."),
+                            completion(content="Your email is " + profile["email"], raw_text=True))
+        self.assertIn(profile["email"], reply.content)
+        self.assertIsNone(self.state["halt_reason"])
+        self.assertNotIn("lookup_customer", {t["function"]["name"]
+                          for t in self.provider.call_args.kwargs["tools"]})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -36,10 +36,13 @@ class GatewayAdapter:
         self.actions_by_name = {action.name: action for action in self.actions}
         # Keep original schemas for legitimate historical calls. Live inference
         # must explicitly choose a claimed ID or null, never silently omit it.
+        # The redundant legacy lookup remains callable/restorable, but is not
+        # advertised to the model alongside the canonical verification tool.
         self.live_actions = tuple(action.model_copy(update={"params": create_model(
             "ExplicitCustomerClaim", __base__=action.params,
             claimed_customer_id=(str | None, ...))})
-            if action.name == "verify_customer" else action for action in self.actions)
+            if action.name == "verify_customer" else action for action in self.actions
+            if action.name != "lookup_customer")
         if any(action.info.get("tool_type") not in {"read", "write", "generic"} for action in self.actions):
             raise ValueError("Unsupported action type")
         self.model, self.options = self._select_configuration()
@@ -73,7 +76,7 @@ class GatewayAdapter:
                 })
             return self.live_actions
         return tuple(action for action in self.live_actions if action.name in {
-            "verify_customer", "lookup_customer", "transfer_to_human",
+            "verify_customer", "transfer_to_human",
         })
 
     def request_summary(self, messages, actions, model_call):

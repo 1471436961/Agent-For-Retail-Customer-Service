@@ -37,8 +37,8 @@ def text_reply(text="Please provide the email associated with your account."):
 
 
 def call(identifier="lookup_1", **changes):
-    values = {"id": identifier, "name": "lookup_customer", "requestor": "assistant",
-              "arguments": {"customer_id": "", "email": "alex.p0@example.test"}}
+    values = {"id": identifier, "name": "verify_customer", "requestor": "assistant",
+              "arguments": {"claimed_customer_id": None, "email": "alex.p0@example.test"}}
     values.update(changes)
     if values["name"] == "verify_customer":
         values["arguments"] = {"claimed_customer_id": None, **values["arguments"]}
@@ -116,7 +116,7 @@ class ProtocolTests(unittest.TestCase):
         self.transport.side_effect = None
         self.transport.return_value = {"status_code": 200, "body": {"customer_id": customer["customer_id"]}}
         self.transport.side_effect = [self.transport.return_value, {"status_code": 200, "body": customer}]
-        output = self.tools["lookup_customer"](customer_id="", email=customer["email"])
+        output = self.tools["verify_customer"](claimed_customer_id=None, email=customer["email"])
         self.provider.return_value = text_reply(f"The account email is {output['email']}.")
         reply, final = self.agent.generate_next_message(
             results(tool_result("email_lookup", json.dumps(output))), json.loads(json.dumps(state)),
@@ -137,13 +137,13 @@ class ProtocolTests(unittest.TestCase):
         kwargs = gateway.call_args.kwargs
         self.assertEqual(kwargs["model"], "offline_model")
         self.assertEqual([action.name for action in kwargs["actions"]],
-                         ["verify_customer", "lookup_customer", "transfer_to_human"])
+                         ["verify_customer", "transfer_to_human"])
         verify = kwargs["actions"][0].params.model_json_schema()
         self.assertIn("claimed_customer_id", verify["required"])
         self.assertNotIn("max_tokens", kwargs)
         self.agent.generate_next_message(user(), self.agent.get_init_state())
         self.assertEqual(self.provider.call_args.kwargs["max_tokens"], 1024)
-        self.assertIn("lookup_customer", [tool.name for tool in self.provider.call_args.kwargs["tools"]])
+        self.assertNotIn("lookup_customer", [tool.name for tool in self.provider.call_args.kwargs["tools"]])
 
     def test_one_of_is_explicit_fixed_value_is_omitted(self):
         agent = self.build(self.make_context(models=[{"model": "choice_model", "constraints": {
@@ -274,7 +274,7 @@ class ProtocolTests(unittest.TestCase):
                                     calls_reply(call("verify-corrected"))]
         reply, state = self.agent.generate_next_message(user(), self.agent.get_init_state())
         self.assertIsNone(state["halt_reason"])
-        self.assertEqual([c.name for c in reply.tool_calls], ["lookup_customer"])
+        self.assertEqual([c.name for c in reply.tool_calls], ["verify_customer"])
         self.assertEqual(state["pending_call_ids"], ["verify-corrected"])
         self.assertEqual(state["tool_rounds"], 1)
         self.transport.assert_not_called()

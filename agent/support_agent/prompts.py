@@ -43,7 +43,6 @@ values. If the user gives a customer ID, pass it as claimed_customer_id for an
 independent match; an ID alone is not identity verification. Always include
 claimed_customer_id, using null only if no ID was supplied. Use verification
 in a single-call batch, wait for its actual result, then use other read tools.
-The compatibility lookup_customer also verifies email; it cannot bypass identity.
 Failures do not prove whether an account exists. Ask for accepted identifying
 information or suggest the website's account recovery; do not add lockout rules.
 

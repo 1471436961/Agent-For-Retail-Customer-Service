@@ -5,7 +5,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from itertools import product
 import re
-from pydantic import create_model
+from pydantic import Field, create_model
 
 from tau2.data_model.message import MultiToolMessage, ToolMessage
 from support_agent.state import decode
@@ -40,7 +40,11 @@ class GatewayAdapter:
         # advertised to the model alongside the canonical verification tool.
         self.live_actions = tuple(action.model_copy(update={"params": create_model(
             "ExplicitCustomerClaim", __base__=action.params,
-            claimed_customer_id=(str | None, ...))})
+            claimed_customer_id=(str | None, Field(..., description=
+                "The exact account/customer ID explicitly supplied anywhere in the customer conversation. "
+                "If the request names a customer to look up, copy that ID here so the independent email/name search "
+                "can match it before details are read. It is a consistency claim, not an authentication credential. "
+                "Use null ONLY when no customer ID was supplied. Never discard a supplied ID.")))})
             if action.name == "verify_customer" else action for action in self.actions
             if action.name != "lookup_customer")
         if any(action.info.get("tool_type") not in {"read", "write", "generic"} for action in self.actions):

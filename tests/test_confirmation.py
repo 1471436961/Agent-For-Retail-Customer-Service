@@ -18,14 +18,20 @@ class ConfirmationTests(unittest.TestCase):
     def setUp(self):
         self.backend = WriteBackend()
         self.kit = Tools(ClientAPI(self.backend, context=ClientAPIContext(conversation_id="confirm")))
-        self.kit.verify_customer(email="alex.p0@example.test")
+        verified = self.kit.verify_customer(email="alex.p0@example.test")
         self.tools = self.kit.get_tools()
         context = build_agent_context(domain="retail_plus", tools=list(self.tools.values()),
                                       resource_root=Path(__file__).resolve().parents[1] / "agent",
                                       model_configs=[{"model": "offline_model", "constraints": {"max_tokens": 1024}}])
         with activate_agent_context(context):
             self.agent = create_agent()
-        self.state = self.agent.get_init_state()
+        # Agent and toolkit must both have genuine verification evidence.
+        self.state = self.agent.get_init_state([
+            user("My email is alex.p0@example.test."),
+            calls_reply(call("setup-verified", name="verify_customer", arguments={
+                "email": "alex.p0@example.test", "claimed_customer_id": None})),
+            results(tool_result("setup-verified", json.dumps(verified))),
+        ])
         self.provider = patch("tau2.hyper.agent_context.generate").start()
         self.addCleanup(patch.stopall)
         self.sequence = 0

@@ -5,6 +5,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from itertools import product
 import re
+from pydantic import create_model
 
 from tau2.data_model.message import MultiToolMessage, ToolMessage
 from support_agent.state import decode
@@ -33,6 +34,12 @@ class GatewayAdapter:
         self.limits = AgentLimits.from_runtime(context.runtime_config)
         self.actions = context.action_interface.select(ACTION_NAMES)
         self.actions_by_name = {action.name: action for action in self.actions}
+        # Keep original schemas for legitimate historical calls. Live inference
+        # must explicitly choose a claimed ID or null, never silently omit it.
+        self.live_actions = tuple(action.model_copy(update={"params": create_model(
+            "ExplicitCustomerClaim", __base__=action.params,
+            claimed_customer_id=(str | None, ...))})
+            if action.name == "verify_customer" else action for action in self.actions)
         if any(action.info.get("tool_type") not in {"read", "write", "generic"} for action in self.actions):
             raise ValueError("Unsupported action type")
         self.model, self.options = self._select_configuration()
@@ -60,8 +67,12 @@ class GatewayAdapter:
         # matching the wording of the customer's request. The toolkit remains
         # the authority for identity, ownership and write authorization.
         if state.verified_customer_id:
-            return self.actions
-        return tuple(action for action in self.actions if action.name in {
+            if not state.customer_profile_loaded:
+                return tuple(action for action in self.live_actions if action.name in {
+                    "get_customer_summary", "transfer_to_human",
+                })
+            return self.live_actions
+        return tuple(action for action in self.live_actions if action.name in {
             "verify_customer", "lookup_customer", "transfer_to_human",
         })
 
@@ -94,7 +105,8 @@ class GatewayAdapter:
                 body = {"ok": False, "error": result.content}
             else:
                 try:
-                    body = {"ok": True, "result": json.loads(result.content)}
+                    body = {"ok": True, "evidence_call_id": result.id,
+                            "result": json.loads(result.content)}
                 except (ValueError, TypeError):
                     body = {"ok": False, "error": "The tool returned invalid JSON."}
             return result.model_copy(update={"content": json.dumps(body, ensure_ascii=False)})

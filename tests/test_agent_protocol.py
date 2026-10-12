@@ -32,13 +32,16 @@ def user(text="Please help me with my account."):
 
 
 def text_reply(text="Please provide the email associated with your account."):
-    return AssistantMessage(role="assistant", content=text, timestamp=None)
+    # Explicit fixture classification. This helper does not test semantic truth.
+    return AssistantMessage(role="assistant", content=json.dumps({"kind": "policy", "text": text}), timestamp=None)
 
 
 def call(identifier="lookup_1", **changes):
     values = {"id": identifier, "name": "lookup_customer", "requestor": "assistant",
               "arguments": {"customer_id": "", "email": "alex.p0@example.test"}}
     values.update(changes)
+    if values["name"] == "verify_customer":
+        values["arguments"] = {"claimed_customer_id": None, **values["arguments"]}
     return ToolCall(**values)
 
 
@@ -82,7 +85,12 @@ class ProtocolTests(unittest.TestCase):
 
     def pending(self, *calls):
         self.provider.return_value = calls_reply(*(calls or [call()]))
-        reply, state = self.agent.generate_next_message(user(), self.agent.get_init_state())
+        history = []
+        if calls and all(c.name not in {"verify_customer", "lookup_customer"} for c in calls):
+            profile = json.loads((ROOT / "tests/fixtures/p0_baseline.json").read_text(encoding="utf-8"))["records"]["customers"][0]
+            history = [user(), calls_reply(call("setup-verified")),
+                       results(tool_result("setup-verified", json.dumps(profile)))]
+        reply, state = self.agent.generate_next_message(user(), self.agent.get_init_state(history))
         self.assertTrue(reply.tool_calls)
         return state
 
@@ -95,7 +103,7 @@ class ProtocolTests(unittest.TestCase):
             get_agent_context()
         self.assertIs(self.agent.context, self.context)
         reply, state = self.agent.generate_next_message(user(), self.agent.get_init_state())
-        self.assertEqual(reply.content, self.provider.return_value.content)
+        self.assertEqual(reply.content, json.loads(self.provider.return_value.content)["text"])
         self.assertEqual(state["model_calls"], 1)
         self.provider.assert_called_once()
         self.transport.assert_not_called()
@@ -128,8 +136,10 @@ class ProtocolTests(unittest.TestCase):
             self.agent.generate_next_message(user(), self.agent.get_init_state())
         kwargs = gateway.call_args.kwargs
         self.assertEqual(kwargs["model"], "offline_model")
-        self.assertEqual(kwargs["actions"], self.context.action_interface.select(
-            ["verify_customer", "lookup_customer", "transfer_to_human"]))
+        self.assertEqual([action.name for action in kwargs["actions"]],
+                         ["verify_customer", "lookup_customer", "transfer_to_human"])
+        verify = kwargs["actions"][0].params.model_json_schema()
+        self.assertIn("claimed_customer_id", verify["required"])
         self.assertNotIn("max_tokens", kwargs)
         self.agent.generate_next_message(user(), self.agent.get_init_state())
         self.assertEqual(self.provider.call_args.kwargs["max_tokens"], 1024)

@@ -68,8 +68,11 @@ class ReadScopeTests(unittest.TestCase):
                 gift = next(m for m in record["payment_methods"] if m["source"] == "gift_card")
                 gift["balance"] = raw
                 self.backend.overrides[("GET", "/v1/customers/p0_customer_a")] = self.backend.response(record)
+                receipt = self.verify()
+                self.assertEqual(receipt["verification"]["profile_state"], "unavailable")
+                self.assertNotIn("payment_methods", receipt)
                 with self.assertRaises(ReadError) as caught:
-                    self.verify()
+                    self.kit.get_customer_summary()
                 self.assertEqual(caught.exception.code, "invalid_read_response")
 
     def test_balance_compatibility_cannot_turn_id_mismatch_into_profile_access(self):
@@ -248,16 +251,17 @@ class ReadScopeTests(unittest.TestCase):
 
     def test_response_id_redirection_cannot_read_another_customer_or_resource(self):
         self.backend.overrides[("GET", "/v1/customers/p0_customer_a")] = self.backend.response(self.backend.records["customers"][1])
-        with self.assertRaises(ReadError) as caught:
-            self.verify()
-        self.assertEqual(caught.exception.code, "invalid_read_response")
-        self.assertNotIn("casey", str(caught.exception))
+        receipt = self.verify()
+        self.assertEqual(receipt["profile_error"]["code"], "invalid_read_response")
+        self.assertEqual(receipt["verification"]["profile_state"], "unavailable")
+        self.assertNotIn("casey", json.dumps(receipt))
         self.assertEqual(self.kit._identity.customer_id, "p0_customer_a")
 
     def test_detail_failure_cannot_release_the_session_binding(self):
         self.backend.overrides[("GET", "/v1/customers/p0_customer_a")] = self.backend.missing()
-        with self.assertRaises(ReadError):
-            self.verify()
+        receipt = self.verify()
+        self.assertEqual(receipt["profile_error"]["http_status"], 404)
+        self.assertEqual(receipt["verification"]["profile_state"], "unavailable")
         with self.assertRaises(ReadError) as caught:
             self.kit.verify_customer(email="casey.p0@example.test")
         self.assertEqual(str(caught.exception), "identity_verification_failed")
@@ -418,10 +422,11 @@ class ReadScopeTests(unittest.TestCase):
             agent = create_agent()
         state = agent.get_init_state()
         with patch("tau2.hyper.agent_context.generate") as provider:
-            provider.return_value = AssistantMessage(role="assistant", content="请提供账户邮编。")
+            provider.return_value = AssistantMessage(role="assistant", content=json.dumps({
+                "kind": "clarification", "text": "请提供账户邮编。"}))
             _, state = agent.generate_next_message(UserMessage(role="user", content="Li 是姓，名字是 Alex。"), state)
             provider.return_value = AssistantMessage(role="assistant", tool_calls=[ToolCall(id="verify_full_name", name="verify_customer",
-                arguments={"first_name": "Alex", "last_name": "Li", "postal_code": "10001"})])
+                arguments={"first_name": "Alex", "last_name": "Li", "postal_code": "10001", "claimed_customer_id": None})])
             reply, state = agent.generate_next_message(UserMessage(role="user", content="刚才写错了，账户邮编是10001。"), state)
             self.assertEqual(self.backend.calls, [])
             self.assertEqual(provider.call_args.kwargs["messages"][1].content, "Li 是姓，名字是 Alex。")
@@ -430,7 +435,8 @@ class ReadScopeTests(unittest.TestCase):
             reply, state = agent.generate_next_message(MultiToolMessage(role="tool", tool_messages=[
                 ToolMessage(role="tool", id="verify_full_name", content=json.dumps(result))]), state)
             order = self.kit.get_tools()[reply.tool_calls[0].name](**reply.tool_calls[0].arguments)
-            provider.return_value = AssistantMessage(role="assistant", content="订单当前是 pending。")
+            provider.return_value = AssistantMessage(role="assistant", content=json.dumps({
+                "kind": "facts", "text": "订单当前是 pending。", "evidence_call_ids": ["own_order"]}))
             reply, state = agent.generate_next_message(MultiToolMessage(role="tool", tool_messages=[
                 ToolMessage(role="tool", id="own_order", content=json.dumps(order))]), state)
             self.assertEqual(provider.call_count, 4)

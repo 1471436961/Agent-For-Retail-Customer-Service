@@ -49,15 +49,21 @@ class CustomerTools(ClientAPIToolKitBase):
 
     @is_tool(ToolType.READ)
     def verify_customer(self, email: str = "", first_name: str = "", last_name: str = "",
-                        postal_code: str = "", claimed_customer_id: str = "") -> dict:
+                        postal_code: str = "", claimed_customer_id: str | None = None) -> dict:
         """Verify the customer's independently supplied identity, then read their profile.
 
         Provide email alone OR all of first_name, last_name and postal_code. An
-        optional claimed_customer_id must match the independent search. A customer
+        claimed_customer_id must match the independent search when supplied; use
+        null only when the customer has not supplied an account ID. A customer
         ID alone never verifies identity. This conversation cannot switch customers.
+        If search verifies identity but profile loading fails, returns a verified
+        receipt with profile_state="unavailable" and profile_error; no profile facts.
+        Recover with get_customer_summary rather than repeating the search.
         """
         selector = identity_selector(email, first_name, last_name, postal_code)
-        if not isinstance(claimed_customer_id, str):
+        if claimed_customer_id is not None and not isinstance(claimed_customer_id, str):
+            raise ReadError("invalid_resource_identifier")
+        if isinstance(claimed_customer_id, str) and not claimed_customer_id.strip():
             raise ReadError("invalid_resource_identifier")
         with self._lock:
             self._sync_session()
@@ -77,7 +83,15 @@ class CustomerTools(ClientAPIToolKitBase):
             # Search is the verification authority. Lock the identity before the
             # detail read; even a later transport/schema failure cannot switch it.
             self._identity.customer_id = found
-            return self._profile()
+            try:
+                return self._profile()
+            except ReadError as error:
+                # Independent verification succeeded. Preserve that evidence
+                # without claiming profile data was loaded or inventing values.
+                return {"customer_id": found,
+                        "verification": {"state": "verified", "profile_state": "unavailable"},
+                        "profile_error": {"code": error.code, "operation": error.operation,
+                                          "http_status": error.http_status}}
 
     @is_tool(ToolType.READ)
     def lookup_customer(self, customer_id: str, email: str = "") -> dict:
@@ -86,7 +100,7 @@ class CustomerTools(ClientAPIToolKitBase):
         Prefer verify_customer for email or full-name/postal-code verification.
         customer_id is only an optional claim; use an empty string when absent.
         """
-        return self.verify_customer(email=email, claimed_customer_id=customer_id)
+        return self.verify_customer(email=email, claimed_customer_id=customer_id or None)
 
     @is_tool(ToolType.READ)
     def get_customer_summary(self) -> dict:

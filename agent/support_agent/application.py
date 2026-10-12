@@ -8,6 +8,7 @@ from support_agent.state import (
 from tau2.data_model.message import AssistantMessage, SystemMessage
 from support_agent.adapters.conversation_api import TRANSFER_NOTICE
 from support_agent.domain.gateway_failure import diagnose_gateway_failure
+from support_agent.domain.reply import REPLY_INSTRUCTIONS, render_model_reply
 import json
 
 
@@ -52,7 +53,7 @@ class RetailAgent:
         try:
             prompt = SYSTEM_PROMPT if current.verified_customer_id else IDENTITY_PROMPT
             actions = self.gateway.actions_for(current)
-            messages = [SystemMessage(role="system", content=prompt, timestamp=None),
+            messages = [SystemMessage(role="system", content=prompt + REPLY_INSTRUCTIONS, timestamp=None),
                         *self.gateway.project_history(current.history)]
         except Exception as error:
             current.gateway_diagnostic = diagnose_gateway_failure(error, stage="history_projection")
@@ -74,10 +75,16 @@ class RetailAgent:
                 if (isinstance(reply, AssistantMessage) and reply.tool_calls and
                         current.request_tool_rounds >= self.gateway.limits.max_tool_rounds):
                     return self._stop(current, "tool_round_limit")
-                if isinstance(reply, AssistantMessage) and not reply.tool_calls and reply.content and current.receipt_facts_to_display:
-                    reply = reply.model_copy(update={"content": reply.content + receipt_text(current.receipt_facts_to_display)})
+                if isinstance(reply, AssistantMessage) and not reply.tool_calls and reply.content:
+                    try:
+                        text = render_model_reply(reply.content, current)
+                    except ValueError as error:
+                        raise ProtocolError(str(error)) from None
+                    if current.receipt_facts_to_display:
+                        text += receipt_text(current.receipt_facts_to_display)
+                    reply = reply.model_copy(update={"content": text})
                 candidate = current.model_copy(deep=True)
-                record_reply(candidate, reply, self.gateway.actions_by_name)
+                record_reply(candidate, reply, {action.name: action for action in actions})
             except ProtocolError as error:
                 if attempt == 0 and current.model_calls < self.gateway.limits.max_model_calls:
                     # A local validation rejection executed nothing. Correct it

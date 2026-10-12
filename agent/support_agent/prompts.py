@@ -7,6 +7,7 @@ facts or claim an operation happened before its actual tool result.
 First verify identity using verify_customer: an independently supplied email,
 or complete first_name + last_name + postal_code. If an account ID was supplied,
 include it as claimed_customer_id so the search result must match that claim.
+Always include claimed_customer_id; use JSON null only when no ID was supplied.
 An ID alone is not verification. Ask for missing identifying information.
 Use one verification call, wait for its actual result, then answer from the
 returned evidence or continue with the newly available business tools. Never
@@ -39,7 +40,8 @@ Use verify_customer with an independently supplied email alone
 OR the complete first_name + last_name + postal_code selector. Understand these
 fields from the whole conversation; respect corrections and never invent missing
 values. If the user gives a customer ID, pass it as claimed_customer_id for an
-independent match; an ID alone is not identity verification. Use verification
+independent match; an ID alone is not identity verification. Always include
+claimed_customer_id, using null only if no ID was supplied. Use verification
 in a single-call batch, wait for its actual result, then use other read tools.
 The compatibility lookup_customer also verifies email; it cannot bypass identity.
 Failures do not prove whether an account exists. Ask for accepted identifying

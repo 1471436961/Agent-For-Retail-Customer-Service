@@ -21,12 +21,19 @@ from tau2.hyper.client_api import ClientAPI, ClientAPIContext
 from tau2.data_model.message import AssistantMessage, MultiToolMessage, ToolCall, ToolMessage, UserMessage
 
 
-def completion(*, arguments=None, content=None, calls=None):
+def completion(*, arguments=None, content=None, calls=None, raw_text=False, explicit_claim=True):
+    if content is not None and calls is None and arguments is None and not raw_text:
+        content = json.dumps({"kind": "policy", "text": content})
     message = {"role": "assistant", "content": content}
     if arguments is not None:
+        arguments = {"claimed_customer_id": None, **arguments}
         calls = [{"id": "wire-verify", "type": "function", "function": {
             "name": "verify_customer", "arguments": json.dumps(arguments)}}]
     if calls is not None:
+        calls = [dict(call, function=dict(call["function"], arguments=json.dumps({
+                    "claimed_customer_id": None, **json.loads(call["function"]["arguments"])})))
+                 if explicit_claim and call["function"]["name"] == "verify_customer" else call
+                 for call in calls]
         message["tool_calls"] = calls
     return ModelResponse(model="openai/contract-test-model", choices=[{
         "finish_reason": "tool_calls" if calls is not None else "stop", "message": message,
@@ -55,7 +62,7 @@ class GatewayWireTests(unittest.TestCase):
         names = {t["function"]["name"] for t in first["tools"]}
         self.assertEqual(names, {"verify_customer", "lookup_customer", "transfer_to_human"})
         self.assertIsNone(state["verified_customer_id"])
-        self.assertLess(state["gateway_request"]["request_bytes"], 5000)
+        self.assertLess(state["gateway_request"]["request_bytes"], 6500)
         self.assertEqual(state["gateway_request"]["fixed_token_settings"], {"max_tokens": 1024})
         self.assertEqual(state["gateway_request"]["model_call"], 1)
         call = reply.tool_calls[0]
@@ -248,7 +255,8 @@ class GatewayWireTests(unittest.TestCase):
             self.assertEqual(state["gateway_diagnostic"], {
                 "stage": "gateway_generate", "exception_type": "TypeError", "http_status": None,
                 "reported_exception_type": None, "provider_error_code": None, "rate_limit_kind": None,
-                "provider_message_terms": [], "origin": None, "failure_code": None})
+                "provider_message_terms": [], "provider_message_words": [],
+                "origin": None, "failure_code": None})
             self.assertIn('"exception_type": "TypeError"', reply.content)
             self.assertNotIn("synthetic-sensitive", reply.content + json.dumps(state))
             again, restored = self.agent.generate_next_message(self.user, json.loads(json.dumps(state)))

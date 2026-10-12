@@ -32,6 +32,10 @@ class SessionState(BaseModel):
     gateway_diagnostic: GatewayDiagnostic | None = None
     gateway_request: dict | None = None
     verified_customer_id: str | None = None
+    customer_profile_loaded: bool = False
+    customer_email: str | None = None
+    customer_evidence_id: str | None = None
+    evidence_call_ids: list[str] = Field(default_factory=list)
     pending_calls: list[dict] = Field(default_factory=list)
     proposals: dict[str, dict] = Field(default_factory=dict)
     reviewed: dict[str, int] = Field(default_factory=dict)
@@ -76,6 +80,10 @@ def receive(state, message):
         for result in results:
             call = calls.get(result.id)
             if result.error or not call:
+                if call and call["name"] == "get_customer_summary":
+                    state.customer_profile_loaded = False
+                    state.customer_email = None
+                    state.customer_evidence_id = None
                 continue
             try:
                 body = json.loads(result.content)
@@ -83,10 +91,23 @@ def receive(state, message):
                 continue
             if not isinstance(body, dict):
                 continue
+            state.evidence_call_ids.append(result.id)
             if call["name"] in {"verify_customer", "lookup_customer"}:
                 identifier = body.get("customer_id")
                 if isinstance(identifier, str) and identifier.strip():
                     state.verified_customer_id = identifier
+                    state.customer_profile_loaded = False
+                    state.customer_email = None
+                    state.customer_evidence_id = None
+                    if isinstance(body.get("email"), str):
+                        state.customer_profile_loaded = True
+                        state.customer_email = body["email"]
+                        state.customer_evidence_id = result.id
+            elif call["name"] == "get_customer_summary":
+                if body.get("customer_id") == state.verified_customer_id and isinstance(body.get("email"), str):
+                    state.customer_profile_loaded = True
+                    state.customer_email = body["email"]
+                    state.customer_evidence_id = result.id
             elif call["name"] in {"prepare_change", "prepare_plan_step"} and body.get("state") == "prepared":
                 identifier = body.get("proposal_id")
                 if isinstance(identifier, str) and isinstance(body.get("facts"), dict):

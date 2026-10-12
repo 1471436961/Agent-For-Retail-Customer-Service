@@ -86,6 +86,9 @@ class RetailAgent:
                 candidate = current.model_copy(deep=True)
                 record_reply(candidate, reply, {action.name: action for action in actions})
             except ProtocolError as error:
+                # These errors are fixed local validation descriptions, never
+                # raw provider output or private record contents.
+                current.protocol_diagnostic = str(error)
                 if attempt == 0 and current.model_calls < self.gateway.limits.max_model_calls:
                     # A local validation rejection executed nothing. Correct it
                     # using genuine history + trusted feedback, never fake tool
@@ -99,6 +102,7 @@ class RetailAgent:
                         "If approval or information is missing, ask the customer. No rejected call has taken effect.")]
                     continue
                 return self._stop(current, "invalid_model_reply")
+            candidate.protocol_diagnostic = None
             return reply, candidate.model_dump(mode="json")
 
     @staticmethod
@@ -124,6 +128,8 @@ class RetailAgent:
                 "invalid_model_reply": "I could not continue because the model returned an invalid message or tool call.",
             }.get(reason, "I could not continue because the Agent encountered an internal error.")
         diagnostic = ""
+        if reason == "invalid_model_reply" and state.protocol_diagnostic:
+            diagnostic = " Validation: " + state.protocol_diagnostic
         if reason == "gateway_failure" and state.gateway_diagnostic:
             diagnostic = " Service diagnostic: " + json.dumps(
                 state.gateway_diagnostic.model_dump(exclude_none=True), sort_keys=True,

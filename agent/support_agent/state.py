@@ -29,6 +29,7 @@ class SessionState(BaseModel):
     tool_rounds: int = Field(default=0, ge=0)
     request_tool_rounds: int = Field(default=0, ge=0)
     halt_reason: str | None = None
+    protocol_diagnostic: str | None = None
     gateway_diagnostic: GatewayDiagnostic | None = None
     gateway_request: dict | None = None
     verified_customer_id: str | None = None

@@ -1,4 +1,4 @@
-"""Model-declared reply intent and references to actual tool evidence.
+"""Native model text plus legacy structured reply compatibility.
 
 Only model output JSON is decoded here. Customer language is never parsed.
 """
@@ -15,10 +15,17 @@ class ReplyIntent(BaseModel):
 
 
 def render_model_reply(content, state):
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("Text replies must be nonempty strings")
+    # AssistantMessage.content is native customer-facing text in the platform
+    # contract. Never require an invented JSON envelope for normal dialogue.
+    # Retain validation only when the model explicitly uses the old envelope.
+    if not content.lstrip().startswith("{"):
+        return content
     try:
         intent = ReplyIntent.model_validate_json(content, strict=True)
     except (ValidationError, ValueError, TypeError):
-        raise ValueError("Text replies require the documented reply-intent JSON") from None
+        raise ValueError("Invalid legacy structured reply") from None
     refs = intent.evidence_call_ids
     if len(refs) != len(set(refs)) or set(refs) - set(state.evidence_call_ids):
         raise ValueError("Reply cites unavailable or unsuccessful tool evidence")
@@ -42,23 +49,13 @@ def render_model_reply(content, state):
 
 
 REPLY_INSTRUCTIONS = """
-For a customer-facing text reply, put ONLY one JSON object in content (no code
-fences). This is an internal format; the Agent renders it for the customer:
-{"kind":"clarification","text":"your question"} for greetings, missing
-information or clarification, with no account facts or claims of completion.
-{"kind":"policy","text":"your general policy explanation"} for policy,
-with no claims about a particular customer's records or an operation outcome.
-{"kind":"facts","text":"your explanation based on tool results",
- "evidence_call_ids":["actual successful call ID"]} for factual explanations.
-For an account email/ID answer use {"kind":"customer_fields",
-"fields":["email"],"evidence_call_ids":["actual profile receipt call ID"]}.
-Customer fields are rendered from the real profile; do not put email values in
-text. Use customer_id in fields only if requested/useful. Do not echo identifying
-input as a result. A profile-unavailable verification receipt contains no email;
-use get_customer_summary to read details, then reference its successful receipt.
-Choose reply kind semantically and honestly; never label an account fact as
-policy/clarification to avoid its evidence requirement. Tool calls still use
-normal tau2 tool_calls with object arguments, and content must be null.
-Take evidence_call_ids from evidence_call_id in successful projected tool
-content, not from guessed IDs. Failed results have no successful reference.
+Return customer-facing replies as ordinary natural-language content, without
+an internal JSON envelope. For customer records, first verify independently
+with the supplied tools and answer only from a successful actual profile
+result. Never treat user input as a returned record. If only verification
+succeeded and the profile is unavailable, get_customer_summary must succeed
+before an email answer. Explain failed operations truthfully; do not claim
+completion or expose unrelated private fields. Clarifications and policy
+explanations are normal text too. For actions use normal tau2 tool_calls with
+object arguments and null content; wait for actual results before answering.
 """

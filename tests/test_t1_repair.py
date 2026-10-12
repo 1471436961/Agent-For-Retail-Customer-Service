@@ -71,12 +71,34 @@ class T1RepairTests(unittest.TestCase):
         self.assertEqual([r["path"] for r in self.requests],
                          ["/v1/customers/search", "/v1/customers/" + self.case["customer_id"]])
 
-    def test_plain_echo_and_fabricated_factual_reference_are_not_forwarded(self):
-        self.provider.side_effect = [completion(content="The account email is " + self.case["email"], raw_text=True),
-            self.envelope(kind="facts", text="The account email is " + self.case["email"], evidence_call_ids=["invented"])]
+    def test_fabricated_legacy_factual_reference_is_not_forwarded(self):
+        bad = self.envelope(kind="facts", text="The account email is " + self.case["email"],
+                            evidence_call_ids=["invented"])
+        self.provider.side_effect = [bad, bad]
         reply, self.state = self.agent.generate_next_message(self.user, self.state)
         self.assertEqual(self.state["halt_reason"], "invalid_model_reply")
         self.assertNotIn(self.case["email"], reply.content)
+        self.assertEqual(self.requests, [])
+
+    def test_native_text_after_verified_profile_is_returned_without_format_retry(self):
+        self.kit.client_api = type(self.kit.client_api)(self.kit.client_api._transport)
+        actual = self.execute(self.verify_call())
+        text = "The email address on your account is " + json.loads(actual.tool_messages[0].content)["email"] + "."
+        before = self.provider.call_count
+        reply = self.decide(actual, completion(content=text, raw_text=True))
+        self.assertEqual(reply.content, text)
+        self.assertEqual(self.provider.call_count, before + 1)
+        self.assertIsNone(self.state["halt_reason"])
+        self.assertIsNone(self.state["protocol_diagnostic"])
+        self.assertTrue(self.state["customer_profile_loaded"])
+        self.assertEqual([r["path"] for r in self.requests],
+                         ["/v1/customers/search", "/v1/customers/" + self.case["customer_id"]])
+
+    def test_native_clarification_works_before_verification(self):
+        reply = self.decide(UserMessage(role="user", content="您好"),
+            completion(content="您好，请提供账户邮箱或完整姓名和邮编。", raw_text=True))
+        self.assertEqual(reply.content, "您好，请提供账户邮箱或完整姓名和邮编。")
+        self.assertIsNone(self.state["halt_reason"])
         self.assertEqual(self.requests, [])
 
     def test_semantic_clarification_remains_possible_without_verification(self):

@@ -29,7 +29,16 @@ class CustomerTools(ClientAPIToolKitBase):
         self._lock = RLock()
 
     def _sync_session(self):
-        conversation_id = self.client_api.context.conversation_id
+        # The host creates a fresh toolkit for each trial. Ordinary customer
+        # endpoints do not take a conversation ID, so optional host context
+        # must not prevent these requests. Still clear state when a supplied
+        # context changes (or disappears); never invent an ID for transfers.
+        try:
+            conversation_id = self.client_api.context.conversation_id
+        except RuntimeError as error:
+            if str(error) != "Client API context has not been initialized":
+                raise
+            conversation_id = None
         if self._conversation_id != conversation_id:
             self._identity = IdentityState()
             self._conversation_id = conversation_id

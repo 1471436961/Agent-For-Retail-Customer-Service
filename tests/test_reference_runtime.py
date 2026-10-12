@@ -55,6 +55,42 @@ def reference_kit():
 
 
 class ReferenceRuntimeTests(unittest.TestCase):
+    def test_t1_without_optional_context_still_searches_before_details(self):
+        kit, runtime, requests = reference_kit()
+        # Candidate server constructs ClientAPI without context; its transport
+        # already addresses the current backend, as in the remote t1 trial.
+        kit = Tools(ClientAPI(kit.client_api._transport))
+        case = SEED["cases"][0]
+        result = kit.lookup_customer(customer_id=case["customer_id"], email=case["email"])
+        self.assertEqual(result["email"], case["email"])
+        self.assertEqual([r["path"] for r in requests],
+                         ["/v1/customers/search", "/v1/customers/" + case["customer_id"]])
+        self.assertEqual(kit.get_customer_summary()["email"], case["email"])
+        with self.assertRaisesRegex(ReadError, "identity_verification_failed"):
+            kit.lookup_customer(customer_id=SEED["cases"][1]["customer_id"],
+                                email=SEED["cases"][1]["email"])
+        self.assertEqual(len(requests), 3)
+
+    def test_missing_context_does_not_fabricate_transfer_conversation(self):
+        kit, runtime, requests = reference_kit()
+        kit = Tools(ClientAPI(kit.client_api._transport))
+        outcome = kit.transfer_to_human("Customer requests a human.", "explicit_request")
+        self.assertEqual(outcome["state"], "unknown")
+        self.assertEqual(outcome["error"], "transfer_transport_failure")
+        self.assertEqual(requests, [])
+
+    def test_late_context_binding_clears_prior_toolkit_identity(self):
+        kit, runtime, requests = reference_kit()
+        kit = Tools(ClientAPI(kit.client_api._transport))
+        first, second = SEED["cases"][:2]
+        kit.verify_customer(email=first["email"], claimed_customer_id=first["customer_id"])
+        kit.client_api._set_context({"conversation_id": "next-trusted-conversation"})
+        with self.assertRaisesRegex(ReadError, "identity_required"):
+            kit.get_customer_summary()
+        self.assertEqual(kit._proposals, {})
+        self.assertEqual(kit.verify_customer(email=second["email"],
+                         claimed_customer_id=second["customer_id"])["customer_id"], second["customer_id"])
+
     def test_t1_identity_search_precedes_real_customer_details(self):
         kit, runtime, requests = reference_kit()
         case = SEED["cases"][0]

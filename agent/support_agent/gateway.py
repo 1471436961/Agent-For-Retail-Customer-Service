@@ -16,7 +16,9 @@ from support_agent.adapters.change_tools import ACTION_NAMES
 class AgentLimits:
     # Engineering defaults, not provider pricing or platform quotas.
     max_model_calls: int = 128
-    max_tool_rounds: int = 16
+    # Do not add a smaller per-user tool cap that truncates multi-order reads.
+    # The session model-call budget already bounds the default decision loop.
+    max_tool_rounds: int = 128
 
     @classmethod
     def from_runtime(cls, runtime):

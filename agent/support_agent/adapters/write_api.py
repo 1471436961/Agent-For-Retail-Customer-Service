@@ -1,9 +1,11 @@
 """One explicit business request, no retry; validate receipts before claiming success."""
 from copy import deepcopy
+from collections import Counter
 from urllib.parse import quote
 from pydantic import ValidationError
 from support_agent.adapters.read_models import Record, Address, OrderCancellation, OrderPayment, OrderItem, OrderReturn, OrderExchange
 from typing import Literal
+from support_agent.adapters.response_values import normalize_response, ResponseValueError, validation_issues
 
 
 class DefaultAddressResult(Record):
@@ -71,8 +73,8 @@ def write_once(api, facts):
         return {"state": "failed" if response.status_code in {400, 404, 405, 409, 413, 422} else "unknown",
                 "operation": operation, "http_status": response.status_code, "error": "write_http_failure"}
     try:
-        model.model_validate(response.body)
-        actual = response.body
+        actual, warnings = normalize_response(response.body)
+        model.model_validate(actual)
         key = "customer_id" if facts["kind"] == "default_address" else "order_id"
         if actual[key] != identifier:
             raise ValueError("Mismatched receipt target")
@@ -82,10 +84,19 @@ def write_once(api, facts):
                 raise ValueError("Mismatched receipt address")
         if facts["kind"] == "cancel" and actual["cancellation"] != facts["body"]:
             raise ValueError("Mismatched receipt reason")
-        validate_financial_receipt(facts, actual)
-    except (ValueError, TypeError, KeyError, ValidationError):
+        warnings.extend(validate_financial_receipt(facts, actual))
+    except ValidationError as error:
+        return {"state": "unknown", "operation": operation, "error": "invalid_write_receipt",
+                "validation_issues": validation_issues(error, model)}
+    except ResponseValueError as error:
+        return {"state": "unknown", "operation": operation, "error": "invalid_write_receipt",
+                "validation_issues": [{"path": error.path, "type": "invalid_serialized_scalar"}]}
+    except (ValueError, TypeError, KeyError):
         return {"state": "unknown", "operation": operation, "error": "invalid_write_receipt"}
-    return {"state": "accepted" if facts["kind"] in {"return", "exchange"} else "completed", "operation": operation, "receipt": deepcopy(actual)}
+    outcome = {"state": "accepted" if facts["kind"] in {"return", "exchange"} else "completed", "operation": operation, "receipt": deepcopy(actual)}
+    if warnings:
+        outcome["response_warnings"] = warnings
+    return outcome
 
 
 def canonical_address(value):
@@ -101,6 +112,7 @@ def canonical_address(value):
 
 
 def validate_financial_receipt(facts, actual):
+    warnings = []
     kind, body = facts["kind"], facts["body"]
     order = facts["snapshot"]["order"]
     if kind in {"cancel", "payment", "modify_items"}:
@@ -124,7 +136,30 @@ def validate_financial_receipt(facts, actual):
             old.update(item_id=new["item_id"], price=new["price"], options=new["options"])
         if actual["items"] != items:
             raise ValueError("Mismatched item receipt")
-    if kind == "return" and actual["return_request"] != body:
-        raise ValueError("Mismatched return receipt")
-    if kind == "exchange" and actual["exchange"] != {**body, "price_difference": facts["calculations"][0]["result"]}:
-        raise ValueError("Mismatched exchange receipt")
+    if kind == "return":
+        receipt = actual["return_request"]
+        if (receipt["refund_payment_method_id"] != body["refund_payment_method_id"] or
+                Counter(receipt["item_ids"]) != Counter(body["item_ids"])):
+            raise ValueError("Mismatched return receipt")
+        if receipt["item_ids"] != body["item_ids"]:
+            warnings.append({"code": "receipt_item_order_changed", "path": "return_request.item_ids"})
+    if kind == "exchange":
+        receipt = actual["exchange"]
+        if (receipt["payment_method_id"] != body["payment_method_id"] or
+                receipt["price_difference"] != facts["calculations"][0]["result"]):
+            raise ValueError("Mismatched exchange receipt")
+        pairs = lambda rows: Counter((row["existing_item_id"], row["replacement_item_id"]) for row in rows)
+        if pairs(receipt["replacements"]) != pairs(body["replacements"]):
+            # RetailTools stores old/new lists independently sorted, and the
+            # SDK REST adapter zips them back together. Recognize only that
+            # exact public reference representation, never arbitrary remapping.
+            old_ids = sorted(row["existing_item_id"] for row in body["replacements"])
+            new_ids = sorted(row["replacement_item_id"] for row in body["replacements"])
+            reference_rows = [{"existing_item_id": old, "replacement_item_id": new}
+                              for old, new in zip(old_ids, new_ids)]
+            if receipt["replacements"] != reference_rows:
+                raise ValueError("Mismatched exchange receipt")
+            warnings.append({"code": "reference_exchange_pairing_lost", "path": "exchange.replacements"})
+        elif receipt["replacements"] != body["replacements"]:
+            warnings.append({"code": "receipt_item_order_changed", "path": "exchange.replacements"})
+    return warnings

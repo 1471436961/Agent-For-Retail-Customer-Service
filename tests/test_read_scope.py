@@ -332,7 +332,7 @@ class ReadScopeTests(unittest.TestCase):
     def test_money_type_unknown_state_and_extra_fields_are_rejected(self):
         self.verify()
         invalids = []
-        for value in (True, None, "20.00", float("nan"), float("inf")):
+        for value in (True, None, "not-money", float("nan"), float("inf")):
             record = deepcopy(self.backend.records["orders"][0])
             record["items"][0]["price"] = value
             invalids.append(record)
@@ -422,8 +422,7 @@ class ReadScopeTests(unittest.TestCase):
             agent = create_agent()
         state = agent.get_init_state()
         with patch("tau2.hyper.agent_context.generate") as provider:
-            provider.return_value = AssistantMessage(role="assistant", content=json.dumps({
-                "kind": "clarification", "text": "请提供账户邮编。"}))
+            provider.return_value = AssistantMessage(role="assistant", content="请提供账户邮编。")
             _, state = agent.generate_next_message(UserMessage(role="user", content="Li 是姓，名字是 Alex。"), state)
             provider.return_value = AssistantMessage(role="assistant", tool_calls=[ToolCall(id="verify_full_name", name="verify_customer",
                 arguments={"first_name": "Alex", "last_name": "Li", "postal_code": "10001", "claimed_customer_id": None})])
@@ -435,8 +434,7 @@ class ReadScopeTests(unittest.TestCase):
             reply, state = agent.generate_next_message(MultiToolMessage(role="tool", tool_messages=[
                 ToolMessage(role="tool", id="verify_full_name", content=json.dumps(result))]), state)
             order = self.kit.get_tools()[reply.tool_calls[0].name](**reply.tool_calls[0].arguments)
-            provider.return_value = AssistantMessage(role="assistant", content=json.dumps({
-                "kind": "facts", "text": "订单当前是 pending。", "evidence_call_ids": ["own_order"]}))
+            provider.return_value = AssistantMessage(role="assistant", content="订单当前是 pending。")
             reply, state = agent.generate_next_message(MultiToolMessage(role="tool", tool_messages=[
                 ToolMessage(role="tool", id="own_order", content=json.dumps(order))]), state)
             self.assertEqual(provider.call_count, 4)

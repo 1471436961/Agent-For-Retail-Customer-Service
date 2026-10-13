@@ -32,8 +32,7 @@ def user(text="Please help me with my account."):
 
 
 def text_reply(text="Please provide the email associated with your account."):
-    # Explicit fixture classification. This helper does not test semantic truth.
-    return AssistantMessage(role="assistant", content=json.dumps({"kind": "policy", "text": text}), timestamp=None)
+    return AssistantMessage(role="assistant", content=text, timestamp=None)
 
 
 def call(identifier="lookup_1", **changes):
@@ -90,6 +89,9 @@ class ProtocolTests(unittest.TestCase):
             profile = json.loads((ROOT / "tests/fixtures/p0_baseline.json").read_text(encoding="utf-8"))["records"]["customers"][0]
             history = [user(), calls_reply(call("setup-verified")),
                        results(tool_result("setup-verified", json.dumps(profile)))]
+        if len(calls) > 1:
+            # Historical batch compatibility is distinct from live retail policy.
+            return self.agent.get_init_state([*history, user(), calls_reply(*calls)])
         reply, state = self.agent.generate_next_message(user(), self.agent.get_init_state(history))
         self.assertTrue(reply.tool_calls)
         return state
@@ -103,7 +105,7 @@ class ProtocolTests(unittest.TestCase):
             get_agent_context()
         self.assertIs(self.agent.context, self.context)
         reply, state = self.agent.generate_next_message(user(), self.agent.get_init_state())
-        self.assertEqual(reply.content, json.loads(self.provider.return_value.content)["text"])
+        self.assertEqual(reply.content, self.provider.return_value.content)
         self.assertEqual(state["model_calls"], 1)
         self.provider.assert_called_once()
         self.transport.assert_not_called()
@@ -278,6 +280,35 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(state["pending_call_ids"], ["verify-corrected"])
         self.assertEqual(state["tool_rounds"], 1)
         self.transport.assert_not_called()
+
+    def test_parallel_reads_are_corrected_to_one_call_before_host_execution(self):
+        state = self.pending(call("verification"))
+        self.provider.side_effect = [
+            calls_reply(call("read-a", name="get_customer_summary", arguments={}),
+                        call("read-b", name="list_customer_orders", arguments={})),
+            calls_reply(call("read-corrected", name="get_customer_summary", arguments={})),
+        ]
+        reply, final = self.agent.generate_next_message(results(tool_result("verification",
+            '{"customer_id":"p0_customer_a","email":"alex.p0@example.test"}')), state)
+        self.assertEqual(len(reply.tool_calls), 1)
+        self.assertEqual(final["pending_call_ids"], ["read-corrected"])
+        self.assertIsNone(final["halt_reason"])
+        self.transport.assert_not_called()
+
+    def test_default_budget_allows_more_than_sixteen_sequential_read_rounds(self):
+        state = self.pending(call("verification"))
+        incoming = results(tool_result("verification",
+            '{"customer_id":"p0_customer_a","email":"alex.p0@example.test"}'))
+        for index in range(18):
+            self.provider.return_value = calls_reply(call(f"read-{index}",
+                name="list_customer_orders", arguments={}))
+            reply, state = self.agent.generate_next_message(incoming, state)
+            self.assertIsNone(state["halt_reason"])
+            incoming = results(tool_result(reply.tool_calls[0].id, '{"order_ids":[]}'))
+        self.provider.return_value = text_reply("I have checked the orders.")
+        _, state = self.agent.generate_next_message(incoming, state)
+        self.assertIsNone(state["halt_reason"])
+        self.assertEqual(state["request_tool_rounds"], 19)
 
     def test_correction_cannot_fabricate_approval_for_an_unreviewed_write(self):
         self.provider.side_effect = [calls_reply(call("unapproved", name="execute_default_address", arguments={"proposal_id": "proposal-1"})),

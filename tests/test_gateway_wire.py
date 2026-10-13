@@ -22,8 +22,6 @@ from tau2.data_model.message import AssistantMessage, MultiToolMessage, ToolCall
 
 
 def completion(*, arguments=None, content=None, calls=None, raw_text=False, explicit_claim=True):
-    if content is not None and calls is None and arguments is None and not raw_text:
-        content = json.dumps({"kind": "policy", "text": content})
     message = {"role": "assistant", "content": content}
     if arguments is not None:
         arguments = {"claimed_customer_id": None, **arguments}
@@ -221,13 +219,18 @@ class GatewayWireTests(unittest.TestCase):
                     "name": "get_customer_summary", "arguments": "{}"}},
                  {"id": "wire-catalog", "type": "function", "function": {
                     "name": "list_products", "arguments": "{}"}}]
-        self.provider.side_effect = [completion(arguments={"email": "alex.p0@example.test"}),
-                                    completion(calls=calls), completion(content="The catalog request failed.")]
+        self.provider.return_value = completion(arguments={"email": "alex.p0@example.test"})
         reply, state = self.agent.generate_next_message(self.user, self.agent.get_init_state())
         verify_call = reply.tool_calls[0]
         verified = self.kit.get_tools()[verify_call.name](**verify_call.arguments)
-        reply, state = self.agent.generate_next_message(MultiToolMessage(role="tool", tool_messages=[
-            ToolMessage(role="tool", id=verify_call.id, content=json.dumps(verified))]), state)
+        # A historical pending batch must remain readable even though live
+        # retail policy now permits only one call at a time.
+        historical = AssistantMessage(role="assistant", tool_calls=[ToolCall(
+            id=row["id"], name=row["function"]["name"], arguments={}) for row in calls])
+        state = self.agent.get_init_state([self.user, reply, MultiToolMessage(role="tool", tool_messages=[
+            ToolMessage(role="tool", id=verify_call.id, content=json.dumps(verified))]), historical])
+        reply = historical
+        self.provider.return_value = completion(content="The catalog request failed.")
         self.backend.overrides[("GET", "/v1/catalog/products")] = self.backend.missing()
         from support_agent.domain.identity import ReadError
         results = []

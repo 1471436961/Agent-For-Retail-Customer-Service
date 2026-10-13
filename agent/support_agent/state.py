@@ -138,11 +138,13 @@ def receive(state, message):
     store(state, message)
 
 
-def record_reply(state, reply, actions):
+def record_reply(state, reply, actions, *, live=False):
     if not isinstance(reply, AssistantMessage) or reply.is_audio:
         raise ProtocolError("Expected a text assistant or assistant tool batch")
     has_text = bool(reply.content and reply.content.strip())
     calls = reply.tool_calls or []
+    if live and len(calls) > 1:
+        raise ProtocolError("Retail policy requires at most one tool call per assistant message")
     if not (has_text or calls) or state.pending_call_ids:
         raise ProtocolError("Empty assistant message or unfinished tool batch")
     identifiers = [call.id for call in calls]

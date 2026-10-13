@@ -42,14 +42,12 @@ class SandboxDialogueTests(unittest.TestCase):
 
         http_requests = []
         canned = [
-            {"role": "assistant", "content": json.dumps({"kind": "clarification",
-                "text": "你好，请提供账户邮箱，或完整姓名和邮编。"})},
+            {"role": "assistant", "content": "你好，请提供账户邮箱，或完整姓名和邮编。"},
             {"role": "assistant", "content": None, "tool_calls": [{
                 "id": "loopback-verify", "type": "function", "function": {
                     "name": "verify_customer", "arguments": json.dumps({
                         "email": "alex.p0@example.test", "claimed_customer_id": "p0_customer_a"})}}]},
-            {"role": "assistant", "content": json.dumps({"kind": "customer_fields",
-                "fields": ["email"], "evidence_call_ids": ["loopback-verify"]})},
+            {"role": "assistant", "content": "email: alex.p0@example.test"},
         ]
 
         class Handler(BaseHTTPRequestHandler):

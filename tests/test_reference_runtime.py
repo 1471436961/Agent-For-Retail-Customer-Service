@@ -4,9 +4,12 @@ No canned REST response or model completion is used. The SDK's public
 development seed is applied to a tiny fixture DB; benchmark tasks are not read.
 """
 import json
+import sys
 import unittest
 from copy import deepcopy
 from pathlib import Path
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "agent"))
 from fixtures.p2_backend import SyntheticBackend
 from tools import Tools
 from tau2.domains.retail.data_model import RetailDB
@@ -15,10 +18,12 @@ from tau2.environment.environment import Environment
 from tau2.hyper.client_api import ClientAPI
 from tau2.hyper.client_api.development import apply_development_seed
 from tau2.hyper.client_api.runtime import ClientAPIRuntime
-from tau2.data_model.message import AssistantMessage, ToolCall, ToolMessage
+from tau2.data_model.message import AssistantMessage, ToolCall, ToolMessage, UserMessage, MultiToolMessage
+from tau2.hyper.agent_context import activate_agent_context, build_agent_context
+from unittest.mock import patch
+from agent import create_agent
 from support_agent.domain.identity import ReadError
 
-ROOT = Path(__file__).resolve().parents[1]
 SEED = json.loads((ROOT / "materials/client_api/development_seed.json").read_text())
 
 
@@ -54,7 +59,125 @@ def reference_kit():
     return Tools(ClientAPI(transport, context=runtime.context)), runtime, requests
 
 
+def serialized_reference_kit():
+    """The same real REST backend, with the SDK's actual scalar serializer."""
+    kit, runtime, requests = reference_kit()
+    transport = kit.client_api._transport
+
+    def serialized_transport(request):
+        response = transport(request)
+        response["body"] = json.loads(Environment.to_json_str(response["body"]))
+        return response
+
+    kit.client_api = ClientAPI(serialized_transport, context=runtime.context)
+    return kit, runtime, requests
+
+
+def apply_native_reference(tools, kind, customer_id, params):
+    """Independent native toolkit path; no candidate receipt validation."""
+    if kind in {"default_address", "order_address"}:
+        address = legacy_address(params["address"])
+        args = dict(address1=address["address1"], address2=address["address2"],
+                    city=address["city"], state=address["state"],
+                    country=address["country"], zip=address["zip"])
+        if kind == "default_address":
+            return tools.modify_user_address(user_id=customer_id, **args)
+        return tools.modify_pending_order_address(order_id=params["order_id"], **args)
+    if kind == "cancel":
+        return tools.cancel_pending_order(params["order_id"], params["reason"])
+    if kind == "payment":
+        return tools.modify_pending_order_payment(params["order_id"], params["payment_method_id"])
+    if kind == "return":
+        return tools.return_delivered_order_items(params["order_id"], params["item_ids"],
+                                                 params["refund_payment_method_id"])
+    function = tools.modify_pending_order_items if kind == "modify_items" else tools.exchange_delivered_order_items
+    return function(params["order_id"], [row["existing_item_id"] for row in params["replacements"]],
+                    [row["replacement_item_id"] for row in params["replacements"]], params["payment_method_id"])
+
+
 class ReferenceRuntimeTests(unittest.TestCase):
+    @staticmethod
+    def change_parameters(kit, kind, case):
+        params = {"order_id": case["order_id"]}
+        if "address" in kind:
+            params["address"] = {"address_line_1": "90 New Road", "city": "Boston",
+                                 "region": "MA", "country": "USA", "postal_code": "02101"}
+            if kind == "default_address":
+                params.pop("order_id")
+        elif kind == "cancel":
+            params["reason"] = "no longer needed"
+        elif kind == "payment":
+            params["payment_method_id"] = case["payment_method_ids"]["paypal"]
+        else:
+            item = kit.get_owned_order(case["order_id"])["items"][0]
+            if kind == "return":
+                params.update(item_ids=[item["item_id"]],
+                    refund_payment_method_id=case["payment_method_ids"]["credit_card"])
+            else:
+                product = kit.get_product_variants(item["product_id"])
+                target = next(i for i in product["items"] if i["available"] and i["item_id"] != item["item_id"])
+                params.update(replacements=[{"existing_item_id": item["item_id"], "replacement_item_id": target["item_id"]}],
+                    preserve_options=[], payment_method_id=case["payment_method_ids"]["paypal"])
+        return params
+
+    def test_seven_agent_host_dialogues_match_native_reference_database_hashes(self):
+        # The decisions are controlled: this checks protocol and actual DB
+        # effects, not real-model understanding or the full benchmark score.
+        for kind, executor in (("default_address", "execute_default_address"),
+                               ("order_address", "execute_order_address"), ("cancel", "execute_cancellation"),
+                               ("payment", "execute_payment"), ("modify_items", "execute_item_modification"),
+                               ("return", "execute_return"), ("exchange", "execute_exchange")):
+            with self.subTest(kind=kind):
+                kit, runtime, requests = reference_kit()
+                case = SEED["cases"][1 if kind in {"return", "exchange"} else 0]
+                # Obtain independent fixture choices through a separate reader.
+                reader, _, _ = reference_kit()
+                reader.verify_customer(email=case["email"])
+                params = self.change_parameters(reader, kind, case)
+                context = build_agent_context(domain="retail_plus", tools=list(kit.get_tools().values()),
+                    resource_root=ROOT / "agent", model_configs=[{"model": "offline-contract-model"}])
+                with activate_agent_context(context):
+                    agent = create_agent()
+                host = Environment("retail_plus", policy="", tools=kit)
+                initial_hash = runtime.environment.get_db_hash()
+                state = agent.get_init_state()
+                incoming = UserMessage(role="user", content="Please help me. My email is " + case["email"])
+                steps = [("verify_customer", {"email": case["email"], "claimed_customer_id": case["customer_id"]}),
+                         ("prepare_change", {"kind": kind, "parameters": params}),
+                         ("review_change", {"proposal_id": "proposal-1"})]
+                with patch("tau2.hyper.agent_context.generate") as model:
+                    for index, (name, arguments) in enumerate(steps):
+                        model.return_value = AssistantMessage(role="assistant", tool_calls=[ToolCall(
+                            id=f"dialogue-{index}", name=name, arguments=arguments)])
+                        reply, state = agent.generate_next_message(incoming, state)
+                        self.assertEqual(len(reply.tool_calls), 1)
+                        result = host.get_response(reply.tool_calls[0])
+                        self.assertFalse(result.error, result.content)
+                        incoming = MultiToolMessage(role="tool", tool_messages=[result])
+                    recap, state = agent.generate_next_message(incoming, state)
+                    self.assertFalse(recap.tool_calls)
+                    self.assertIn("Please confirm", recap.content)
+                    self.assertEqual(state["reviewed"], {"proposal-1": state["user_turn"]})
+                    self.assertEqual(runtime.environment.get_db_hash(), initial_hash)
+                    # No business write until the actual later approval message.
+                    writes = lambda: [request for request in requests if request["method"] != "GET"
+                                     and request["path"] != "/v1/customers/search"]
+                    self.assertEqual(writes(), [])
+                    model.return_value = AssistantMessage(role="assistant", tool_calls=[ToolCall(
+                        id="dialogue-execute", name=executor, arguments={"proposal_id": "proposal-1"})])
+                    reply, state = agent.generate_next_message(UserMessage(role="user",
+                        content="This is the complete list. I approve the exact change."), state)
+                    result = host.get_response(reply.tool_calls[0])
+                    self.assertFalse(result.error, result.content)
+                    model.return_value = AssistantMessage(role="assistant", content="The requested operation was recorded.")
+                    final, state = agent.generate_next_message(MultiToolMessage(role="tool", tool_messages=[result]), state)
+                    self.assertIsNone(state["halt_reason"])
+                    self.assertIn("Recorded operation facts", final.content)
+                    self.assertEqual(len(writes()), 1)
+                _, gold, _ = reference_kit()
+                apply_native_reference(gold.environment.tools, kind, case["customer_id"], params)
+                self.assertEqual(runtime.environment.get_db_hash(), gold.environment.get_db_hash())
+
     def test_t1_without_optional_context_still_searches_before_details(self):
         kit, runtime, requests = reference_kit()
         # Candidate server constructs ClientAPI without context; its transport
@@ -138,6 +261,12 @@ class ReferenceRuntimeTests(unittest.TestCase):
         self.assertEqual(len([r for r in replay_requests if r["path"].endswith("/cancellations")]), 1)
 
     def test_seven_changes_against_real_rest_runtime(self):
+        self.exercise_seven_changes(reference_kit)
+
+    def test_seven_changes_accept_sdk_serialized_response_scalars(self):
+        self.exercise_seven_changes(serialized_reference_kit)
+
+    def exercise_seven_changes(self, factory):
         address = {"address_line_1": "90 New Road", "city": "Boston", "region": "MA",
                    "country": "USA", "postal_code": "02101"}
         for kind, executor in (("default_address", "execute_default_address"),
@@ -145,7 +274,7 @@ class ReferenceRuntimeTests(unittest.TestCase):
                                ("payment", "execute_payment"), ("modify_items", "execute_item_modification"),
                                ("return", "execute_return"), ("exchange", "execute_exchange")):
             with self.subTest(kind=kind):
-                kit, runtime, requests = reference_kit()
+                kit, runtime, requests = factory()
                 case = SEED["cases"][1 if kind in {"return", "exchange"} else 0]
                 kit.verify_customer(email=case["email"])
                 params = {"order_id": case["order_id"]}
@@ -171,10 +300,75 @@ class ReferenceRuntimeTests(unittest.TestCase):
                 proposal = kit.prepare_change(kind, params)
                 outcome = getattr(kit, executor)(proposal["proposal_id"])
                 self.assertEqual(outcome["state"], "accepted" if kind in {"return", "exchange"} else "completed", outcome)
+                _, reference_runtime, _ = reference_kit()
+                apply_native_reference(reference_runtime.environment.tools, kind, case["customer_id"], params)
+                self.assertEqual(runtime.environment.get_db_hash(), reference_runtime.environment.get_db_hash())
                 writes = [r for r in requests if r["method"] != "GET" and r["path"] != "/v1/customers/search"]
                 self.assertEqual(len(writes), 1)
                 self.assertEqual(getattr(kit, executor)(proposal["proposal_id"]), outcome)
                 self.assertEqual(len([r for r in requests if r["method"] != "GET" and r["path"] != "/v1/customers/search"]), 1)
+
+    def test_multiple_return_items_keep_counts_but_accept_reference_sort_order(self):
+        kit, runtime, requests = reference_kit()
+        case = SEED["cases"][1]
+        kit.verify_customer(email=case["email"])
+        order = kit.get_owned_order(case["order_id"])
+        ids = sorted([item["item_id"] for item in order["items"]], reverse=True)
+        self.assertNotEqual(ids, sorted(ids))
+        params = {"order_id": case["order_id"], "item_ids": ids,
+                  "refund_payment_method_id": case["payment_method_ids"]["credit_card"]}
+        proposal = kit.prepare_change("return", params)
+        outcome = kit.execute_return(proposal["proposal_id"])
+        self.assertEqual(outcome["state"], "accepted", outcome)
+        write = next(row for row in requests if row["path"].endswith("/returns"))
+        self.assertEqual(write["body"]["item_ids"], ids)
+        self.assertEqual(outcome["receipt"]["return_request"]["item_ids"], sorted(ids))
+        from support_agent.adapters.write_api import validate_financial_receipt
+        invalid = deepcopy(outcome["receipt"])
+        invalid["return_request"]["item_ids"].pop()
+        with self.assertRaisesRegex(ValueError, "Mismatched return receipt"):
+            validate_financial_receipt(proposal["facts"], invalid)
+        _, gold, _ = reference_kit()
+        apply_native_reference(gold.environment.tools, "return", case["customer_id"], params)
+        self.assertEqual(runtime.environment.get_db_hash(), gold.environment.get_db_hash())
+
+    def test_two_product_exchange_handles_exact_reference_independent_sorting(self):
+        kit, runtime, requests = reference_kit()
+        case = SEED["cases"][1]
+        kit.verify_customer(email=case["email"])
+        order = kit.get_owned_order(case["order_id"])
+        selected = [order["items"][0], order["items"][-1]]
+        rows = []
+        for item, new_id in zip(selected, ("a-new-shirt", "z-new-mug")):
+            product = runtime.environment.tools.db.products[item["product_id"]]
+            variant = next(variant for variant in product.variants.values()
+                           if variant.available and variant.item_id != item["item_id"])
+            product.variants[new_id] = variant.model_copy(update={"item_id": new_id})
+            rows.append({"existing_item_id": item["item_id"], "replacement_item_id": new_id})
+        _, gold, _ = reference_kit()
+        gold.environment.tools.db = runtime.environment.tools.db.model_copy(deep=True)
+        params = {"order_id": case["order_id"], "replacements": rows, "preserve_options": [],
+                  "payment_method_id": case["payment_method_ids"]["paypal"]}
+        proposal = kit.prepare_change("exchange", params)
+        outcome = kit.execute_exchange(proposal["proposal_id"])
+        self.assertEqual(outcome["state"], "accepted", outcome)
+        self.assertIn("reference_exchange_pairing_lost", {row["code"] for row in outcome["response_warnings"]})
+        self.assertEqual(outcome["customer_facts"]["requested_replacements"], rows)
+        from support_agent.adapters.write_api import validate_financial_receipt
+        for change in ("count", "method", "amount"):
+            invalid = deepcopy(outcome["receipt"])
+            if change == "count":
+                invalid["exchange"]["replacements"].pop()
+            elif change == "method":
+                invalid["exchange"]["payment_method_id"] = "unapproved-method"
+            else:
+                invalid["exchange"]["price_difference"] += 1
+            with self.subTest(invalid=change), self.assertRaisesRegex(ValueError, "Mismatched exchange receipt"):
+                validate_financial_receipt(proposal["facts"], invalid)
+        write = next(row for row in requests if row["path"].endswith("/exchanges"))
+        self.assertEqual(write["body"]["replacements"], rows)
+        apply_native_reference(gold.environment.tools, "exchange", case["customer_id"], params)
+        self.assertEqual(runtime.environment.get_db_hash(), gold.environment.get_db_hash())
 
     def test_real_address_receipts_normalize_only_optional_second_line(self):
         address = {"address_line_1": "90 New Road", "city": "Boston", "region": "MA",

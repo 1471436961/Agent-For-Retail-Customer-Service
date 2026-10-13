@@ -137,6 +137,9 @@ class CustomerTools(ClientAPIToolKitBase):
         Checks the current own-order list before requesting the order, then checks
         actual customer ownership before returning any order data. No partial
         cancellation, refund or other write is performed.
+        Copy the complete order ID exactly, including a leading #; the tool
+        encodes it for the URL. A response schema/type failure is not an ID error.
+        Never strip punctuation or try a fabricated alternative identifier.
         """
         order_id = resource_id(order_id)
         with self._lock:

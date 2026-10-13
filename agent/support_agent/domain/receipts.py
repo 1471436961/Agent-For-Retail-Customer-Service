@@ -19,7 +19,9 @@ def customer_facts(facts, outcome):
     elif kind == "return":
         summary.update(estimated_original_sale_refund=facts["calculations"][0]["result"], destination=facts["body"]["refund_payment_method_id"], notice="Return application accepted; no refund arrival or timing confirmed.")
     elif kind == "exchange":
-        summary.update(price_difference=outcome["receipt"]["exchange"]["price_difference"], settlement_method=facts["body"]["payment_method_id"], notice="Exchange application accepted; no settlement or shipment completion confirmed.")
+        summary.update(price_difference=outcome["receipt"]["exchange"]["price_difference"], settlement_method=facts["body"]["payment_method_id"],
+                       requested_replacements=facts["body"]["replacements"],
+                       notice="Exchange application accepted; no settlement or shipment completion confirmed.")
     elif kind == "modify_items":
         summary.update(price_difference=facts["calculations"][0]["result"], settlement_method=facts["body"]["payment_method_id"], status=outcome["receipt"]["status"])
     return summary

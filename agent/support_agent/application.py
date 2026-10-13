@@ -77,14 +77,14 @@ class RetailAgent:
                     return self._stop(current, "tool_round_limit")
                 if isinstance(reply, AssistantMessage) and not reply.tool_calls and reply.content:
                     try:
-                        text = render_model_reply(reply.content, current)
+                        text = render_model_reply(reply.content)
                     except ValueError as error:
                         raise ProtocolError(str(error)) from None
                     if current.receipt_facts_to_display:
                         text += receipt_text(current.receipt_facts_to_display)
                     reply = reply.model_copy(update={"content": text})
                 candidate = current.model_copy(deep=True)
-                record_reply(candidate, reply, {action.name: action for action in actions})
+                record_reply(candidate, reply, {action.name: action for action in actions}, live=True)
             except ProtocolError as error:
                 # These errors are fixed local validation descriptions, never
                 # raw provider output or private record contents.
@@ -97,7 +97,7 @@ class RetailAgent:
                     messages = [*messages, SystemMessage(role="system", timestamp=None,
                         content="Your proposed reply was rejected before any tool was executed: " + str(error) +
                         ". Return a corrected reply using the supplied schemas and actual history. "
-                        "Verification and dependent actions require separate batches. "
+                        "Retail policy permits exactly one tool call at a time, followed by its actual result. "
                         "A write still requires the exact displayed proposal and later clear customer approval. "
                         "If approval or information is missing, ask the customer. No rejected call has taken effect.")]
                     continue

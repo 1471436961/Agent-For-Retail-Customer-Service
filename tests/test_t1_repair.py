@@ -71,14 +71,18 @@ class T1RepairTests(unittest.TestCase):
         self.assertEqual([r["path"] for r in self.requests],
                          ["/v1/customers/search", "/v1/customers/" + self.case["customer_id"]])
 
-    def test_fabricated_legacy_factual_reference_is_not_forwarded(self):
-        bad = self.envelope(kind="facts", text="The account email is " + self.case["email"],
-                            evidence_call_ids=["invented"])
-        self.provider.side_effect = [bad, bad]
-        reply, self.state = self.agent.generate_next_message(self.user, self.state)
-        self.assertEqual(self.state["halt_reason"], "invalid_model_reply")
-        self.assertNotIn(self.case["email"], reply.content)
-        self.assertEqual(self.requests, [])
+    def test_native_json_text_is_not_mistaken_for_an_internal_protocol(self):
+        for text in ('{"email":null,"question":"Please provide your email"}',
+                     '{"kind":"facts","text":"Example format"}',
+                     '{ is a literal opening brace in this explanation.'):
+            with self.subTest(text=text):
+                self.state = self.agent.get_init_state()
+                before = self.provider.call_count
+                reply = self.decide(self.user, completion(content=text, raw_text=True))
+                self.assertEqual(reply.content, text)
+                self.assertIsNone(self.state["halt_reason"])
+                self.assertEqual(self.provider.call_count, before + 1)
+                self.assertEqual(self.requests, [])
 
     def test_native_text_after_verified_profile_is_returned_without_format_retry(self):
         self.kit.client_api = type(self.kit.client_api)(self.kit.client_api._transport)
@@ -101,10 +105,10 @@ class T1RepairTests(unittest.TestCase):
         self.assertIsNone(self.state["halt_reason"])
         self.assertEqual(self.requests, [])
 
-    def test_semantic_clarification_remains_possible_without_verification(self):
+    def test_native_markdown_clarification_remains_possible_without_verification(self):
         reply = self.decide(UserMessage(role="user", content="您好"),
-            self.envelope(kind="clarification", text="您好，请提供账户邮箱或完整姓名和邮编。"))
-        self.assertEqual(reply.content, "您好，请提供账户邮箱或完整姓名和邮编。")
+            completion(content="**您好**，请提供账户邮箱或完整姓名和邮编。", raw_text=True))
+        self.assertEqual(reply.content, "**您好**，请提供账户邮箱或完整姓名和邮编。")
         self.assertIsNone(self.state["halt_reason"])
         self.assertEqual(self.requests, [])
 
@@ -112,7 +116,7 @@ class T1RepairTests(unittest.TestCase):
         verification = self.verify_call()
         actual = self.execute(verification)
         source_id = verification.tool_calls[0].id
-        reply = self.decide(actual, self.envelope(kind="customer_fields", fields=["email"], evidence_call_ids=[source_id]))
+        reply = self.decide(actual, completion(content="email: " + self.case["email"], raw_text=True))
         self.assertEqual(reply.content, "email: " + self.case["email"])
         self.assertTrue(self.state["customer_profile_loaded"])
         wire_result = self.provider.call_args.kwargs["messages"][-1]
@@ -120,14 +124,12 @@ class T1RepairTests(unittest.TestCase):
         self.assertEqual(json.loads(wire_result["content"])["evidence_call_id"], source_id)
         self.assertEqual(json.loads(wire_result["content"])["result"]["email"], self.case["email"])
 
-    def test_profile_field_cannot_include_model_supplied_fake_value(self):
+    def test_email_reply_is_native_model_text_grounded_in_profile_instructions(self):
         result = self.execute(self.verify_call())
-        self.provider.side_effect = [self.envelope(kind="customer_fields", fields=["email"],
-            text="fake@example.test", evidence_call_ids=[result.tool_messages[0].id]),
-            self.envelope(kind="customer_fields", fields=["email"], evidence_call_ids=[result.tool_messages[0].id])]
-        reply, self.state = self.agent.generate_next_message(result, self.state)
-        self.assertEqual(reply.content, "email: " + self.case["email"])
-        self.assertNotIn("fake@example.test", reply.content)
+        text = "Your verified account email is " + self.case["email"] + "."
+        reply = self.decide(result, completion(content=text, raw_text=True))
+        self.assertEqual(reply.content, text)
+        self.assertIn("answer only from a successful actual profile", self.provider.call_args.kwargs["messages"][0]["content"])
 
     def test_wrong_claim_never_reads_details_and_failed_result_is_not_evidence(self):
         reply = self.decide(self.user, completion(arguments={"email": self.case["email"],
@@ -135,12 +137,12 @@ class T1RepairTests(unittest.TestCase):
         failed = self.execute(reply)
         self.assertTrue(failed.tool_messages[0].error)
         self.assertEqual([r["path"] for r in self.requests], ["/v1/customers/search"])
-        bad = self.envelope(kind="facts", text="Verification succeeded.",
-                            evidence_call_ids=[failed.tool_messages[0].id])
-        self.provider.side_effect = [bad, bad]
-        _, self.state = self.agent.generate_next_message(failed, self.state)
+        self.decide(failed, completion(content="Please check your identifying information.", raw_text=True))
         self.assertEqual(self.state["evidence_call_ids"], [])
-        self.assertEqual(self.state["halt_reason"], "invalid_model_reply")
+        self.assertIsNone(self.state["halt_reason"])
+        wire_result = self.provider.call_args.kwargs["messages"][-1]
+        self.assertFalse(json.loads(wire_result["content"])["ok"])
+        self.assertIsNone(self.state["verified_customer_id"])
 
     def test_unadvertised_tool_is_corrected_before_host_execution(self):
         unexpected = completion(calls=[{"id": "unexpected", "type": "function", "function": {
@@ -164,18 +166,15 @@ class T1RepairTests(unittest.TestCase):
         self.assertFalse(receipt.tool_messages[0].error)
         self.assertEqual(body["verification"], {"state": "verified", "profile_state": "unavailable"})
         self.assertNotIn("email", body)
-        self.provider.side_effect = [self.envelope(kind="customer_fields", fields=["email"],
-            evidence_call_ids=[verification.tool_calls[0].id]),
-            completion(calls=[{"id": "recovered-profile", "type": "function",
-                "function": {"name": "get_customer_summary", "arguments": "{}"}}])]
+        self.provider.return_value = completion(calls=[{"id": "recovered-profile", "type": "function",
+            "function": {"name": "get_customer_summary", "arguments": "{}"}}])
         recovery, self.state = self.agent.generate_next_message(receipt, self.state)
         self.assertEqual(self.state["verified_customer_id"], self.kit._identity.customer_id)
         self.assertFalse(self.state["customer_profile_loaded"])
         self.assertEqual({t["function"]["name"] for t in self.provider.call_args.kwargs["tools"]},
                          {"get_customer_summary", "transfer_to_human"})
         profile = self.execute(recovery)
-        reply = self.decide(profile, self.envelope(kind="customer_fields", fields=["email"],
-                                                 evidence_call_ids=["recovered-profile"]))
+        reply = self.decide(profile, completion(content="email: " + self.case["email"], raw_text=True))
         self.assertEqual(reply.content, "email: " + self.case["email"])
         self.assertEqual([r["path"] for r in self.requests], ["/v1/customers/search",
             "/v1/customers/" + self.case["customer_id"], "/v1/customers/" + self.case["customer_id"]])
@@ -189,7 +188,7 @@ class T1RepairTests(unittest.TestCase):
         self.state = self.agent.get_init_state(history)
         before = len(self.requests)
         reply = self.decide(UserMessage(role="user", content="Please repeat the verified email."),
-            self.envelope(kind="customer_fields", fields=["email"], evidence_call_ids=["historical-verify"]))
+            completion(content="email: " + self.case["email"], raw_text=True))
         self.assertEqual(reply.content, "email: " + self.case["email"])
         self.assertEqual(len(self.requests), before)
 

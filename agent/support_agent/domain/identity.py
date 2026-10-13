@@ -6,11 +6,12 @@ from dataclasses import dataclass
 class ReadError(ValueError):
     """Safe tool-facing failure; never embeds backend text or record contents."""
 
-    def __init__(self, code, *, operation=None, http_status=None, api_code=None):
+    def __init__(self, code, *, operation=None, http_status=None, api_code=None, validation_issues=None):
         self.code = code
         self.operation = operation
         self.http_status = http_status
         self.api_code = api_code
+        self.validation_issues = validation_issues or []
         facts = [code]
         if operation:
             facts.append(f"operation={operation}")
@@ -18,6 +19,9 @@ class ReadError(ValueError):
             facts.append(f"HTTP={http_status}")
         if api_code:
             facts.append(f"api_code={api_code}")
+        if self.validation_issues:
+            facts.append("validation=" + ",".join(issue["path"] + ":" + issue["type"]
+                                                 for issue in self.validation_issues))
         super().__init__("; ".join(facts))
 
 

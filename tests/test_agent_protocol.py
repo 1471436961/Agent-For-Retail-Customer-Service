@@ -281,19 +281,25 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(state["tool_rounds"], 1)
         self.transport.assert_not_called()
 
-    def test_parallel_reads_are_corrected_to_one_call_before_host_execution(self):
+    def test_independent_parallel_reads_are_forwarded_without_invented_single_call_rule(self):
         state = self.pending(call("verification"))
-        self.provider.side_effect = [
-            calls_reply(call("read-a", name="get_customer_summary", arguments={}),
-                        call("read-b", name="list_customer_orders", arguments={})),
-            calls_reply(call("read-corrected", name="get_customer_summary", arguments={})),
-        ]
+        self.provider.return_value = calls_reply(call("read-a", name="get_customer_summary", arguments={}),
+                                                call("read-b", name="list_customer_orders", arguments={}))
         reply, final = self.agent.generate_next_message(results(tool_result("verification",
             '{"customer_id":"p0_customer_a","email":"alex.p0@example.test"}')), state)
-        self.assertEqual(len(reply.tool_calls), 1)
-        self.assertEqual(final["pending_call_ids"], ["read-corrected"])
+        self.assertEqual(len(reply.tool_calls), 2)
+        self.assertEqual(final["pending_call_ids"], ["read-a", "read-b"])
         self.assertIsNone(final["halt_reason"])
         self.transport.assert_not_called()
+
+    def test_no_default_candidate_quota_at_128_calls_or_tool_rounds(self):
+        state = self.agent.get_init_state()
+        state.update(model_calls=128, tool_rounds=128, request_tool_rounds=128)
+        self.provider.return_value = text_reply("I can continue helping you.")
+        reply, final = self.agent.generate_next_message(user(), state)
+        self.assertEqual(reply.content, "I can continue helping you.")
+        self.assertIsNone(final["halt_reason"])
+        self.assertEqual(final["model_calls"], 129)
 
     def test_default_budget_allows_more_than_sixteen_sequential_read_rounds(self):
         state = self.pending(call("verification"))

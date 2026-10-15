@@ -154,6 +154,8 @@ class ReferenceRuntimeTests(unittest.TestCase):
                         result = host.get_response(reply.tool_calls[0])
                         self.assertFalse(result.error, result.content)
                         incoming = MultiToolMessage(role="tool", tool_messages=[result])
+                    model.return_value = AssistantMessage(role="assistant", content=
+                        "Please confirm the complete proposed change: " + json.dumps(params))
                     recap, state = agent.generate_next_message(incoming, state)
                     self.assertFalse(recap.tool_calls)
                     self.assertIn("Please confirm", recap.content)
@@ -172,7 +174,7 @@ class ReferenceRuntimeTests(unittest.TestCase):
                     model.return_value = AssistantMessage(role="assistant", content="The requested operation was recorded.")
                     final, state = agent.generate_next_message(MultiToolMessage(role="tool", tool_messages=[result]), state)
                     self.assertIsNone(state["halt_reason"])
-                    self.assertIn("Recorded operation facts", final.content)
+                    self.assertEqual(final.content, "The requested operation was recorded.")
                     self.assertEqual(len(writes()), 1)
                 _, gold, _ = reference_kit()
                 apply_native_reference(gold.environment.tools, kind, case["customer_id"], params)

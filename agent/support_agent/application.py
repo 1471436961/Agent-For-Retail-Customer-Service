@@ -3,7 +3,7 @@
 from support_agent.gateway import GatewayAdapter
 from support_agent.prompts import IDENTITY_PROMPT, SYSTEM_PROMPT
 from support_agent.state import (
-    ProtocolError, SessionState, initial_state, receive, record_reply, restore_history, review_text, receipt_text, store, normalize_call_ids,
+    ProtocolError, SessionState, initial_state, receive, record_reply, restore_history, receipt_text, store, normalize_call_ids,
 )
 from tau2.data_model.message import AssistantMessage, SystemMessage
 from support_agent.adapters.conversation_api import TRANSFER_NOTICE
@@ -41,14 +41,8 @@ class RetailAgent:
             return self._stop(current, "invalid_host_sequence")
         if current.handoff in {"accepted", "unknown"}:
             return self._handoff_reply(current)
-        if current.review_to_display:
-            content = review_text(current.review_to_display)
-            if current.receipt_facts_to_display:
-                content += receipt_text(current.receipt_facts_to_display)
-            reply = AssistantMessage(role="assistant", content=content, timestamp=None)
-            record_reply(current, reply, self.gateway.actions_by_name)
-            return reply, current.model_dump(mode="json")
-        if current.model_calls >= self.gateway.limits.max_model_calls:
+        if (self.gateway.limits.max_model_calls is not None and
+                current.model_calls >= self.gateway.limits.max_model_calls):
             return self._stop(current, "model_call_limit")
         try:
             prompt = SYSTEM_PROMPT if current.verified_customer_id else IDENTITY_PROMPT
@@ -72,7 +66,8 @@ class RetailAgent:
                 reply = normalize_call_ids(current, reply)
                 if isinstance(reply, AssistantMessage) and reply.tool_calls and reply.content:
                     reply = reply.model_copy(update={"content": None})
-                if (isinstance(reply, AssistantMessage) and reply.tool_calls and
+                if (self.gateway.limits.max_tool_rounds is not None and
+                        isinstance(reply, AssistantMessage) and reply.tool_calls and
                         current.request_tool_rounds >= self.gateway.limits.max_tool_rounds):
                     return self._stop(current, "tool_round_limit")
                 if isinstance(reply, AssistantMessage) and not reply.tool_calls and reply.content:
@@ -80,16 +75,15 @@ class RetailAgent:
                         text = render_model_reply(reply.content)
                     except ValueError as error:
                         raise ProtocolError(str(error)) from None
-                    if current.receipt_facts_to_display:
-                        text += receipt_text(current.receipt_facts_to_display)
                     reply = reply.model_copy(update={"content": text})
                 candidate = current.model_copy(deep=True)
-                record_reply(candidate, reply, {action.name: action for action in actions}, live=True)
+                record_reply(candidate, reply, {action.name: action for action in actions})
             except ProtocolError as error:
                 # These errors are fixed local validation descriptions, never
                 # raw provider output or private record contents.
                 current.protocol_diagnostic = str(error)
-                if attempt == 0 and current.model_calls < self.gateway.limits.max_model_calls:
+                if attempt == 0 and (self.gateway.limits.max_model_calls is None or
+                                     current.model_calls < self.gateway.limits.max_model_calls):
                     # A local validation rejection executed nothing. Correct it
                     # using genuine history + trusted feedback, never fake tool
                     # results or a fabricated customer approval. Error text here
@@ -97,7 +91,7 @@ class RetailAgent:
                     messages = [*messages, SystemMessage(role="system", timestamp=None,
                         content="Your proposed reply was rejected before any tool was executed: " + str(error) +
                         ". Return a corrected reply using the supplied schemas and actual history. "
-                        "Retail policy permits exactly one tool call at a time, followed by its actual result. "
+                        "Verification and dependent operations must wait for their actual prerequisite results. "
                         "A write still requires the exact displayed proposal and later clear customer approval. "
                         "If approval or information is missing, ask the customer. No rejected call has taken effect.")]
                     continue

@@ -16,7 +16,7 @@ class ResponseValueError(ValueError):
 
 
 def _number(raw, path):
-    if not raw or len(raw) > 128 or raw != raw.strip():
+    if not raw or raw != raw.strip():
         raise ResponseValueError(path)
     try:
         number = json.loads(raw, parse_float=Decimal, parse_int=Decimal)

@@ -3,7 +3,7 @@
 from urllib.parse import quote
 
 from pydantic import ValidationError
-from support_agent.adapters.read_models import READ_MODELS, OrderReadView
+from support_agent.adapters.read_models import READ_MODELS
 from support_agent.domain.identity import ReadError, resource_id
 from support_agent.adapters.response_values import normalize_response, ResponseValueError, validation_issues
 
@@ -33,22 +33,8 @@ def _read(client_api, operation, method, path, *, body=None):
         body, warnings = normalize_response(response.body)
         READ_MODELS[operation].model_validate(body)
     except ValidationError as error:
-        issues = validation_issues(error, READ_MODELS[operation])
-        if operation != "getOrder":
-            raise ReadError("invalid_read_response", operation=operation,
-                            validation_issues=issues) from None
-        try:
-            OrderReadView.model_validate(body)
-        except ValidationError:
-            raise ReadError("invalid_read_response", operation=operation,
-                            validation_issues=issues) from None
-        # Preserve the actual response, including absence of status. The view is
-        # validation only: dumping it would insert defaults the API never sent.
-        warnings.append({
-            "code": "noncanonical_order_response", "validation_issues": issues,
-            "warning": "Use available order facts; missing status does not authorize a change. "
-                       "Do not infer status from an undocumented field or retry the same read blindly.",
-        })
+        raise ReadError("invalid_read_response", operation=operation,
+                        validation_issues=validation_issues(error, READ_MODELS[operation])) from None
     except ResponseValueError as error:
         raise ReadError("invalid_read_response", operation=operation,
                         validation_issues=[{"path": error.path, "type": "invalid_serialized_scalar"}]) from None

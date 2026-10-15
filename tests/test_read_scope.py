@@ -201,9 +201,7 @@ class ReadScopeTests(unittest.TestCase):
         actual = self.kit.list_products()
         self.assertEqual(actual, {"products": [{"product_id": p["product_id"], "name": p["name"]}
                                                for p in self.backend.records["products"]]})
-        product = self.kit.get_product_variants("p0_shirt")
-        self.assertEqual({key: product[key] for key in ("name", "product_id", "items")},
-                         self.backend.records["products"][0])
+        self.assertEqual(self.kit.get_product_variants("p0_shirt"), self.backend.records["products"][0])
         item = self.kit.get_catalog_item("p0_shirt_s_blue")
         self.assertNotIn("product_id", item)
         self.assertIsInstance(item["available"], bool)
@@ -234,74 +232,6 @@ class ReadScopeTests(unittest.TestCase):
         with self.assertRaises(ReadError) as caught:
             self.kit.get_catalog_summary()
         self.assertEqual(caught.exception.http_status, 404)
-
-    def test_single_product_counts_available_variants_after_sdk_serialization(self):
-        from tau2.environment.environment import Environment
-        product = self.backend.records["products"][0]
-        template = deepcopy(product["items"][0])
-        product["items"] = [{**deepcopy(template), "item_id": f"synthetic-{i}", "available": i % 3 != 0}
-                            for i in range(7)]
-        self.verify()
-        for serialized in (False, True):
-            with self.subTest(serialized=serialized):
-                record = json.loads(Environment.to_json_str(product)) if serialized else deepcopy(product)
-                self.backend.overrides[("GET", "/v1/catalog/products/p0_shirt")] = self.backend.response(record)
-                result = self.kit.get_product_variants("p0_shirt")
-                self.assertEqual((result["variant_count"], result["available_variant_count"],
-                                  result["unavailable_variant_count"]), (7, 4, 3))
-                self.assertTrue(all(type(item["available"]) is bool for item in result["items"]))
-                self.assertEqual(len(self.backend.records["products"][0]["items"]), 7)
-        self.assertFalse(any(call["path"] == "/v1/catalog/products" for call in self.backend.calls))
-
-    def test_single_product_empty_or_unavailable_variants_have_zero_available_count(self):
-        self.verify()
-        product = self.backend.records["products"][0]
-        for items in ([], [{**deepcopy(product["items"][0]), "available": False}]):
-            with self.subTest(items=items):
-                record = {**deepcopy(product), "items": items}
-                self.backend.overrides[("GET", "/v1/catalog/products/p0_shirt")] = self.backend.response(record)
-                result = self.kit.get_product_variants("p0_shirt")
-                self.assertEqual(result["available_variant_count"], 0)
-                self.assertEqual(result["variant_count"], len(items))
-                self.assertEqual(result["unavailable_variant_count"], len(items))
-
-    def test_missing_status_and_extra_metadata_preserve_order_facts_without_inventing_state(self):
-        self.verify()
-        record = deepcopy(self.backend.records["orders"][0])
-        del record["status"]
-        record["synthetic_metadata"] = {"note": "a value, not a documented status"}
-        self.backend.overrides[("GET", "/v1/orders/%23P0-PENDING")] = self.backend.response(record)
-        result = self.kit.get_owned_order("#P0-PENDING")
-        self.assertNotIn("status", result)
-        self.assertEqual({key: value for key, value in result.items() if key != "response_warnings"}, record)
-        warning = result["response_warnings"][-1]
-        self.assertEqual(warning["code"], "noncanonical_order_response")
-        self.assertEqual(warning["validation_issues"],
-                         [{"path": "status", "type": "missing"}, {"path": "*", "type": "extra_forbidden"}])
-        for kind in ("cancel", "return", "exchange"):
-            with self.subTest(kind=kind), self.assertRaisesRegex(ReadError, "ineligible_order_status"):
-                self.kit.prepare_change(kind, {"order_id": "#P0-PENDING"})
-        self.assertTrue(all(call["method"] == "GET" or call["path"] == "/v1/customers/search"
-                            for call in self.backend.calls))
-
-    def test_statusless_order_still_rejects_wrong_identity_and_incomplete_business_fields(self):
-        self.verify()
-        original = deepcopy(self.backend.records["orders"][0])
-        del original["status"]
-        original["synthetic_metadata"] = "extra"
-        for changed, expected in (({"customer_id": "p0_customer_b"}, "order_access_denied"),
-                                  ({"order_id": "#OTHER"}, "invalid_read_response"),
-                                  ({"customer_id": None}, "invalid_read_response")):
-            record = {**deepcopy(original), **changed}
-            self.backend.overrides[("GET", "/v1/orders/%23P0-PENDING")] = self.backend.response(record)
-            with self.subTest(changed=changed), self.assertRaisesRegex(ReadError, expected):
-                self.kit.get_owned_order("#P0-PENDING")
-        for missing in ("items", "payments", "shipping_address", "fulfillments", "customer_id"):
-            record = deepcopy(original)
-            del record[missing]
-            self.backend.overrides[("GET", "/v1/orders/%23P0-PENDING")] = self.backend.response(record)
-            with self.subTest(missing=missing), self.assertRaisesRegex(ReadError, "invalid_read_response"):
-                self.kit.get_owned_order("#P0-PENDING")
 
     def test_all_path_identifiers_are_encoded_as_single_opaque_segment(self):
         for reader, original, field, prefix in (

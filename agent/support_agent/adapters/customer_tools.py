@@ -124,10 +124,8 @@ class CustomerTools(ClientAPIToolKitBase):
     def list_customer_orders(self) -> dict:
         """List all order identifiers in the verified customer's current profile.
 
-        No inferred dates or recency ordering are added. Use get_owned_order to
-        obtain current order details. If the customer knows item names but not
-        their order number, inspect their own orders to locate those items;
-        do not require the customer to guess an order number from this list.
+        No inferred dates or recency ordering are added. Select relevant IDs with
+        the customer, then use get_owned_order to obtain current order details.
         """
         with self._lock:
             return {"order_ids": self._profile()["order_ids"]}
@@ -168,20 +166,12 @@ class CustomerTools(ClientAPIToolKitBase):
     def get_product_variants(self, product_id: str) -> dict:
         """Read all variants, options, availability and current prices of a product.
 
-        variant_count counts every variant; available_variant_count counts only
-        in-stock variants, and unavailable_variant_count counts the remainder.
-        For how many options are currently available, use available_variant_count.
-        These are derived tool facts, not additional REST response fields.
         Public catalog products need not appear in the customer's purchased orders.
         This does not grant permission to buy, modify quantity or access other accounts.
         """
         with self._lock:
             self._customer_id()
-            product = read_product(self.client_api, product_id)
-            total = len(product["items"])
-            available = sum(item["available"] for item in product["items"])
-            return {**product, "variant_count": total, "available_variant_count": available,
-                    "unavailable_variant_count": total - available}
+            return read_product(self.client_api, product_id)
 
     @is_tool(ToolType.READ)
     def get_catalog_item(self, item_id: str) -> dict:

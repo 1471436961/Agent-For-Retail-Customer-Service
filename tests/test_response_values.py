@@ -129,18 +129,10 @@ class ResponseValueTests(unittest.TestCase):
         case = SEED["cases"][0]
         response = runtime.dispatch({"method": "GET", "path": "/v1/orders/%23" + case["order_id"][1:]})
         response["body"]["private-account-key"] = "private-account-value"
-        result = read_order(ClientAPI(lambda request: response), case["order_id"])
-        diagnostic = json.dumps(result["response_warnings"])
-        self.assertIn("extra_forbidden", diagnostic)
-        self.assertNotIn("private-account", diagnostic)
-        self.assertEqual(result["private-account-key"], "private-account-value")
-
-    def test_finite_numeric_representation_has_no_invented_128_character_limit(self):
-        from support_agent.adapters.response_values import normalize_response
-        raw = "1." + "0" * 200
-        actual, warnings = normalize_response({"price": raw})
-        self.assertEqual(actual["price"], 1.0)
-        self.assertEqual(warnings[0]["original_value"], raw)
+        with self.assertRaises(ReadError) as caught:
+            read_order(ClientAPI(lambda request: response), case["order_id"])
+        self.assertIn("*:extra_forbidden", str(caught.exception))
+        self.assertNotIn("private-account", str(caught.exception))
 
     def test_missing_required_order_field_is_still_rejected_with_safe_location(self):
         kit, runtime, requests = reference_kit()

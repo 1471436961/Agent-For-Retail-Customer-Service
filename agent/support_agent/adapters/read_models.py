@@ -135,17 +135,6 @@ class Order(Record):
     return_request: OrderReturn | None = None
 
 
-class OrderReadView(Order):
-    """Preserve a noncanonical read without authorizing a state change.
-
-    Unknown/missing status and extra top-level fields remain raw evidence.
-    Identity, ownership, item, money and address fields still have their types
-    checked. Preparation separately requires the documented eligible status.
-    """
-    model_config = ConfigDict(extra="allow", strict=True, allow_inf_nan=False)
-    status: str | None = None
-
-
 READ_MODELS = {
     "searchCustomers": CustomerLookupResult,
     "getCustomer": Customer,

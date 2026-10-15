@@ -41,7 +41,6 @@ class SessionState(BaseModel):
     proposals: dict[str, dict] = Field(default_factory=dict)
     reviewed: dict[str, int] = Field(default_factory=dict)
     review_to_display: dict | None = None
-    reviews_to_display: list[dict] = Field(default_factory=list)
     user_turn: int = 0
     handoff: str | None = None
     receipt_facts_to_display: list[dict] = Field(default_factory=list)
@@ -123,7 +122,6 @@ def receive(state, message):
                 identifier = call["arguments"].get("proposal_id")
                 if proposal == state.proposals.get(identifier) and proposal and proposal.get("state") == "prepared":
                     state.review_to_display = proposal
-                    state.reviews_to_display.append(proposal)
             elif call["name"] == "invalidate_change":
                 state.reviewed.pop(call["arguments"].get("proposal_id"), None)
             elif call["name"] in EXECUTE_ACTIONS:
@@ -140,11 +138,13 @@ def receive(state, message):
     store(state, message)
 
 
-def record_reply(state, reply, actions):
+def record_reply(state, reply, actions, *, live=False):
     if not isinstance(reply, AssistantMessage) or reply.is_audio:
         raise ProtocolError("Expected a text assistant or assistant tool batch")
     has_text = bool(reply.content and reply.content.strip())
     calls = reply.tool_calls or []
+    if live and len(calls) > 1:
+        raise ProtocolError("Retail policy requires at most one tool call per assistant message")
     if not (has_text or calls) or state.pending_call_ids:
         raise ProtocolError("Empty assistant message or unfinished tool batch")
     identifiers = [call.id for call in calls]
@@ -163,6 +163,12 @@ def record_reply(state, reply, actions):
             tool.params.model_validate(call.arguments, strict=True)
         except ValueError as error:
             raise ProtocolError("Arguments do not match tool schema") from error
+    if len(calls) > 1 and any(call.name in {"verify_customer", "lookup_customer"} for call in calls):
+        # Verification changes toolkit identity; dependent reads wait for its result.
+        raise ProtocolError("Verification must use its own tool batch")
+    exclusive = {"prepare_change", "review_change", "invalidate_change", "plan_changes", "prepare_plan_step", "abandon_plan", "inspect_change_result", "transfer_to_human", *EXECUTE_ACTIONS}
+    if len(calls) > 1 and any(call.name in exclusive for call in calls):
+        raise ProtocolError("State-changing or dependent actions require a single-call batch")
     for call in calls:
         if state.handoff in {"accepted", "unknown"}:
             raise ProtocolError("Terminal handoff forbids further tool calls")
@@ -184,15 +190,17 @@ def record_reply(state, reply, actions):
         state.tool_rounds += 1
         state.request_tool_rounds += 1
     if state.review_to_display and has_text and not calls:
-        # The model explains the actual proposal in the customer's language.
-        # A byte-for-byte JSON template is not a business requirement.
-        for proposal in [*state.reviews_to_display, state.review_to_display]:
-            state.reviewed[proposal["proposal_id"]] = state.user_turn
+        identifier = state.review_to_display["proposal_id"]
+        expected = review_text(state.review_to_display)
+        if reply.content != expected + (receipt_text(state.receipt_facts_to_display) if state.receipt_facts_to_display else ""):
+            raise ProtocolError("Review facts must actually be displayed")
+        state.reviewed = {identifier: state.user_turn}
         state.review_to_display = None
-        state.reviews_to_display = []
     if state.handoff == "accepted" and reply.content != TRANSFER_NOTICE:
         raise ProtocolError("Accepted handoff requires exact notice")
     if has_text and not calls and state.receipt_facts_to_display and state.handoff not in {"accepted", "unknown"}:
+        if not reply.content.endswith(receipt_text(state.receipt_facts_to_display)):
+            raise ProtocolError("Actual outcome facts must be displayed")
         state.receipt_facts_to_display = []
     store(state, reply)
 

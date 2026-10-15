@@ -166,21 +166,12 @@ class CustomerTools(ClientAPIToolKitBase):
     def get_product_variants(self, product_id: str) -> dict:
         """Read all variants, options, availability and current prices of a product.
 
-        Derived variant_count is the total, available_variant_count counts only
-        available items, and unavailable_variant_count is the remainder. These
-        counts come from the validated records, not additional REST fields.
-        For how many options are currently available, use available_variant_count;
-        do not label the total variant_count as the available count.
         Public catalog products need not appear in the customer's purchased orders.
         This does not grant permission to buy, modify quantity or access other accounts.
         """
         with self._lock:
             self._customer_id()
-            product = read_product(self.client_api, product_id)
-            total = len(product["items"])
-            available = sum(item["available"] for item in product["items"])
-            return {**product, "variant_count": total, "available_variant_count": available,
-                    "unavailable_variant_count": total - available}
+            return read_product(self.client_api, product_id)
 
     @is_tool(ToolType.READ)
     def get_catalog_item(self, item_id: str) -> dict:

@@ -51,13 +51,6 @@ class ConfirmationTests(unittest.TestCase):
             content = json.dumps(out)
         except ReadError as exc:
             out, error, content = None, True, str(exc)
-        # Controlled model decisions explain the actual result. Production no
-        # longer synthesizes a mandatory JSON recap or receipt block.
-        if out and c.name == "review_change":
-            from support_agent.state import review_text
-            final = review_text(out["review"])
-        elif out and "customer_facts" in out:
-            final += " " + json.dumps(out["customer_facts"], ensure_ascii=False)
         self.provider.return_value = text_reply(final)
         next_reply, self.state = self.agent.generate_next_message(results(tool_result(c.id, content, error)), self.state)
         return out, next_reply
@@ -97,44 +90,6 @@ class ConfirmationTests(unittest.TestCase):
         self.assertNotEqual(self.backend.records["orders"][0]["shipping_address"], self.address)
         self.assertEqual(self.kit.execute_default_address(p["proposal_id"]), out)
         self.assertEqual(len(self.backend.writes()), 1)
-
-    def test_natural_language_recap_and_receipt_have_no_fixed_format_requirement(self):
-        p = self.prepared()
-        request = self.decision(user("请说明方案。"), "review_change", {"proposal_id": p["proposal_id"]})
-        c = request.tool_calls[0]
-        recap = "将默认收货地址改为 90 New Road，Boston，MA，02101，USA。订单地址不变。请确认。"
-        self.provider.return_value = text_reply(recap)
-        reply, self.state = self.agent.generate_next_message(results(tool_result(c.id,
-            json.dumps(self.tools[c.name](**c.arguments)))), self.state)
-        self.assertEqual(reply.content, recap)
-        self.assertIn(p["proposal_id"], self.state["reviewed"])
-        request = self.decision(user("确认，请办理。"), "execute_default_address", {"proposal_id": p["proposal_id"]})
-        c = request.tool_calls[0]
-        outcome = self.tools[c.name](**c.arguments)
-        self.assertEqual(outcome["state"], "completed")
-        self.provider.return_value = text_reply("默认收货地址已更新，订单地址保持不变。")
-        reply, self.state = self.agent.generate_next_message(results(tool_result(c.id, json.dumps(outcome))), self.state)
-        self.assertEqual(reply.content, "默认收货地址已更新，订单地址保持不变。")
-
-    def test_independent_proposals_can_be_reviewed_and_approved_together(self):
-        first = self.prepared()
-        second = self.prepared("order_address", {"order_id": "#P0-PENDING", "address": self.address})
-        self.provider.return_value = calls_reply(*[
-            call(f"review-{i}", name="review_change", arguments={"proposal_id": p["proposal_id"]})
-            for i, p in enumerate((first, second))])
-        reply, self.state = self.agent.generate_next_message(user("请同时说明两个地址变更。"), self.state)
-        reviews = [tool_result(c.id, json.dumps(self.tools[c.name](**c.arguments))) for c in reply.tool_calls]
-        self.provider.return_value = text_reply("默认地址和订单 #P0-PENDING 的地址都改为 90 New Road，Boston MA 02101 USA。请确认这两项变更。")
-        _, self.state = self.agent.generate_next_message(results(*reviews), self.state)
-        self.assertEqual(set(self.state["reviewed"]), {first["proposal_id"], second["proposal_id"]})
-        self.provider.return_value = calls_reply(
-            call("default", name="execute_default_address", arguments={"proposal_id": first["proposal_id"]}),
-            call("order", name="execute_order_address", arguments={"proposal_id": second["proposal_id"]}))
-        reply, self.state = self.agent.generate_next_message(user("两项都确认，请办理。"), self.state)
-        self.assertEqual(len(reply.tool_calls), 2)
-        outputs = [self.tools[c.name](**c.arguments) for c in reply.tool_calls]
-        self.assertTrue(all(output["state"] == "completed" for output in outputs))
-        self.assertEqual(len(self.backend.writes()), 2)
 
     def test_order_address_does_not_change_default(self):
         params = {"order_id": "#P0-PENDING", "address": self.address}
@@ -220,18 +175,13 @@ class ConfirmationTests(unittest.TestCase):
             self.assertEqual(self.kit.execute_default_address(p["proposal_id"]), out)
             self.assertEqual(len(self.backend.writes()), 1)
 
-    def test_independent_approved_write_and_read_can_share_a_batch(self):
+    def test_write_batches_and_wrong_executor_are_rejected(self):
         p = self.reviewed()
         self.provider.return_value = calls_reply(call("w", name="execute_default_address", arguments={"proposal_id": p["proposal_id"]}),
                                                  call("r", name="get_customer_summary", arguments={}))
         reply, self.state = self.agent.generate_next_message(user("confirmed"), self.state)
-        self.assertEqual(len(reply.tool_calls), 2)
+        self.assertFalse(reply.tool_calls)
         self.assertEqual(self.backend.writes(), [])
-        actual = [tool_result(c.id, json.dumps(self.tools[c.name](**c.arguments))) for c in reply.tool_calls]
-        self.provider.return_value = text_reply("默认地址已更新；账户资料已读取。")
-        _, self.state = self.agent.generate_next_message(results(*actual), self.state)
-        self.assertIsNone(self.state["halt_reason"])
-        self.assertEqual(len(self.backend.writes()), 1)
         with self.assertRaisesRegex(ReadError, "wrong_execution_kind"):
             self.kit.execute_cancellation(p["proposal_id"])
 

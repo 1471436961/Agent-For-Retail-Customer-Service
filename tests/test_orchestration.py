@@ -79,10 +79,14 @@ class OrchestrationTests(unittest.TestCase):
         p = self.reviewed()
         self.backend.overrides[("PUT", "/v1/customers/p0_customer_a/default-shipping-address")] = TimeoutError("unavailable")
         self.kit.execute_default_address(p["proposal_id"])
-        for count in range(1, 7):
+        for count in range(1, 4):
             observed = self.kit.inspect_change_result(p["proposal_id"])
             self.assertEqual(observed["state"], "unknown")
             self.assertEqual(observed["inspection_number"], count)
+        before = len(self.backend.calls)
+        with self.assertRaisesRegex(ReadError, "inspection_limit"):
+            self.kit.inspect_change_result(p["proposal_id"])
+        self.assertEqual(len(self.backend.calls), before)
         self.kit.execute_default_address(p["proposal_id"])
         self.assertEqual(len(self.backend.writes()), 1)
 
@@ -156,20 +160,9 @@ class OrchestrationTests(unittest.TestCase):
         with self.assertRaises(ReadError):
             self.kit.execute_default_address(p["proposal_id"])
 
-    def test_accepted_transfer_blocks_later_customer_api_even_in_a_proposed_batch(self):
+    def test_transfer_cannot_share_a_batch_with_other_actions(self):
         self.provider.return_value = calls_reply(call("transfer", name="transfer_to_human", arguments={"summary": "Requested person", "basis": "explicit_request"}),
                                                  call("read", name="get_customer_summary", arguments={}))
         reply, state = self.agent.generate_next_message(user("Get me a person"), self.state)
-        self.assertEqual(len(reply.tool_calls), 2)
-        transfer, read = reply.tool_calls
-        outcome = self.kit.transfer_to_human(**transfer.arguments)
-        self.assertEqual(outcome["state"], "accepted")
-        before = len(self.backend.calls)
-        with self.assertRaisesRegex(ReadError, "human_handoff_terminal"):
-            self.kit.get_customer_summary(**read.arguments)
-        self.assertEqual(len(self.backend.calls), before)
-        from test_agent_protocol import results, tool_result
-        final, state = self.agent.generate_next_message(results(
-            tool_result(transfer.id, json.dumps(outcome)),
-            tool_result(read.id, "human_handoff_terminal", error=True)), state)
-        self.assertEqual(final.content, TRANSFER_NOTICE)
+        self.assertFalse(reply.tool_calls)
+        self.assertEqual(self.backend.writes(), [])

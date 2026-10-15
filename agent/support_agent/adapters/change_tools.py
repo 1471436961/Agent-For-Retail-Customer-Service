@@ -113,9 +113,9 @@ class ChangeTools(CustomerTools):
 
     @is_tool(ToolType.READ)
     def review_change(self, proposal_id: str) -> dict:
-        """Retrieve the exact prepared proposal for the model's full recap.
+        """Retrieve the exact prepared proposal for the Agent's full recap.
 
-        The model explains these actual facts and asks for confirmation; this tool
+        The Agent displays these fixed facts and asks for confirmation; this tool
         itself does not imply that a customer has seen or approved the proposal.
         For one-time item changes the recap also asks if this is the complete list.
         """
@@ -310,7 +310,7 @@ class ChangeTools(CustomerTools):
 
     @is_tool(ToolType.READ)
     def inspect_change_result(self, proposal_id: str) -> dict:
-        """Inspect with existing customer/order reads, without repeating the write.
+        """Inspect with existing customer/order reads, at most three times per proposal.
 
         Preserves the original write outcome. Seeing a record is evidence, never
         proof of request identity or permission to retry an unknown write. No new
@@ -319,6 +319,8 @@ class ChangeTools(CustomerTools):
         with self._lock:
             proposal = self._proposal(proposal_id)
             count = self._inspections.get(proposal_id, 0)
+            if count >= 3:
+                raise ReadError("inspection_limit_no_additional_requests")
             self._inspections[proposal_id] = count + 1
             facts = proposal["facts"]
             observed = self.get_owned_order(facts["order_id"]) if facts["order_id"] else self._profile()

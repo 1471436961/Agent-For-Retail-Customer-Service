@@ -29,7 +29,7 @@ def prepare(kit, kind, params):
     profile = kit._profile()
     order = kit.get_owned_order(resource_id(params.get("order_id", ""))) if kind != "default_address" else None
     if order:
-        require(order.get("status") == ("delivered" if kind in {"return", "exchange"} else "pending"), "ineligible_order_status")
+        require(order["status"] == ("delivered" if kind in {"return", "exchange"} else "pending"), "ineligible_order_status")
     body, calculations, catalog = {}, [], []
     if kind in {"default_address", "order_address"}:
         try:

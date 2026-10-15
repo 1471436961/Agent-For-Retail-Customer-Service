@@ -59,11 +59,7 @@ class ContractBoundaryTests(unittest.TestCase):
 
     def consume_host(self, reply, state):
         result, outputs = self.execute_host(reply)
-        text = "The tool result is available."
-        if outputs[0].get("review"):
-            from support_agent.state import review_text
-            text = review_text(outputs[0]["review"])
-        self.provider.return_value = wire.completion(content=text)
+        self.provider.return_value = wire.completion(content="The tool result is available.")
         response, state = self.agent.generate_next_message(result, state)
         return outputs, response, state
 
@@ -146,7 +142,7 @@ class ContractBoundaryTests(unittest.TestCase):
         reply, restored = self.agent.generate_next_message(
             UserMessage(role="user", content="Please continue."), restored)
         self.assertEqual(reply.content, narration)
-        self.assertEqual(self.provider.call_count, calls + 1)
+        self.assertEqual(self.provider.call_count, calls)
         self.assertIn(proposal["proposal_id"], restored["reviewed"])
         self.assertEqual(self.backend.writes(), [])
 

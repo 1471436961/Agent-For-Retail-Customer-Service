@@ -2,6 +2,8 @@
 
 No legacy field aliases, coerced strings, synthetic fields or hidden selectors.
 Finite monetary values add the documented U3/U6 robustness requirement.
+OrderReadView is a separate read-only compatibility view; it does not change
+the normal Order schema or fill in a missing state.
 """
 
 from typing import Annotated, Literal
@@ -9,6 +11,8 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 NonEmpty = Annotated[str, Field(min_length=1)]
+OrderStatus = Literal["processed", "pending", "pending (items modified)", "delivered",
+                      "cancelled", "exchange requested", "return requested"]
 
 
 class Record(BaseModel):
@@ -126,13 +130,23 @@ class Order(Record):
     customer_id: str
     shipping_address: Address
     items: list[OrderItem]
-    status: Literal["processed", "pending", "pending (items modified)", "delivered",
-                    "cancelled", "exchange requested", "return requested"]
+    status: OrderStatus
     fulfillments: list[OrderFulfillment]
     payments: list[OrderPayment]
     cancellation: OrderCancellation | None = None
     exchange: OrderExchange | None = None
     return_request: OrderReturn | None = None
+
+
+class OrderReadView(Order):
+    """Read available order facts when status is absent or metadata is added.
+
+    This view does not infer a status from another field. Resource identities,
+    ownership and every nested business record retain their original validation.
+    Missing status is readable evidence, never eligibility for a change.
+    """
+    model_config = ConfigDict(extra="allow", strict=True, allow_inf_nan=False)
+    status: OrderStatus | None = None
 
 
 READ_MODELS = {

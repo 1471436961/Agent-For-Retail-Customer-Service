@@ -18,6 +18,69 @@ from tau2.data_model.message import UserMessage, MultiToolMessage
 
 
 class ResponseValueTests(unittest.TestCase):
+    def test_statusless_order_facts_and_catalog_counts_reach_model_through_real_host_messages(self):
+        kit, runtime, requests = serialized_reference_kit()
+        case = SEED["cases"][0]
+        customer = runtime.environment.tools.db.users[case["customer_id"]]
+        product = next(iter(runtime.environment.tools.db.products.values()))
+        transport = kit.client_api._transport
+
+        def observed_order_shape(request):
+            response = transport(request)
+            if request["method"] == "GET" and request["path"].startswith("/v1/orders/"):
+                del response["body"]["status"]
+                response["body"]["synthetic_metadata"] = "extra field; not a status alias"
+            return response
+
+        kit.client_api = ClientAPI(observed_order_shape, context=runtime.context)
+        context = build_agent_context(domain="retail_plus", tools=list(kit.get_tools().values()),
+            resource_root=Path(__file__).resolve().parents[1] / "agent",
+            model_configs=[{"model": "openai/contract-test-model", "constraints": {"max_tokens": 1024}}])
+        with activate_agent_context(context):
+            agent = create_agent()
+        environment = Environment("retail_plus", policy="", tools=kit)
+        decisions = [
+            ("verify_customer", {"first_name": customer.name.first_name, "last_name": customer.name.last_name,
+                                 "postal_code": customer.address.zip, "claimed_customer_id": None}),
+            ("get_owned_order", {"order_id": case["order_id"]}),
+            ("get_product_variants", {"product_id": product.product_id}),
+        ]
+        incoming = UserMessage(role="user", content=
+            f"Please help with my purchases and available options. I'm {customer.name.first_name} "
+            f"{customer.name.last_name}; my postal code is {customer.address.zip}.")
+        state = agent.get_init_state()
+        outputs = []
+        with patch("tau2.utils.llm_utils.completion") as provider, \
+                patch("tau2.utils.llm_utils.get_response_cost", return_value=0):
+            for index, (name, arguments) in enumerate(decisions):
+                provider.return_value = completion(calls=[{
+                    "id": f"observed-shape-{index}", "type": "function",
+                    "function": {"name": name, "arguments": json.dumps(arguments)},
+                }])
+                reply, state = agent.generate_next_message(incoming, state)
+                self.assertEqual(reply.tool_calls[0].name, name)
+                result = environment.get_response(reply.tool_calls[0])
+                self.assertFalse(result.error, result.content)
+                outputs.append(json.loads(result.content))
+                incoming = MultiToolMessage(role="tool", tool_messages=[result])
+            provider.return_value = completion(content="I have the item details. The order status is unavailable.", raw_text=True)
+            reply, state = agent.generate_next_message(incoming, state)
+            self.assertIsNone(state["halt_reason"])
+            self.assertIn("item details", reply.content)
+            wire_results = [json.loads(row["content"]) for row in provider.call_args.kwargs["messages"]
+                            if row["role"] == "tool"]
+            self.assertTrue(all(row["ok"] for row in wire_results))
+            self.assertEqual(wire_results[1]["result"]["items"], outputs[1]["items"])
+            self.assertNotIn("status", wire_results[1]["result"])
+            self.assertEqual(int(wire_results[2]["result"]["available_variant_count"]),
+                             sum(item.available for item in product.variants.values()))
+        self.assertTrue(outputs[1]["items"])
+        self.assertNotIn("status", outputs[1])
+        self.assertEqual(len([request for request in requests if request["path"].startswith("/v1/orders/")]), 1)
+        self.assertEqual(requests[0]["path"], "/v1/customers/search")
+        self.assertTrue(all(request["method"] == "GET" or request["path"] == "/v1/customers/search"
+                            for request in requests))
+
     def test_full_name_verification_then_three_sequential_order_reads(self):
         kit, runtime, requests = serialized_reference_kit()
         customer = next(user for user in runtime.environment.tools.db.users.values()
@@ -129,10 +192,13 @@ class ResponseValueTests(unittest.TestCase):
         case = SEED["cases"][0]
         response = runtime.dispatch({"method": "GET", "path": "/v1/orders/%23" + case["order_id"][1:]})
         response["body"]["private-account-key"] = "private-account-value"
-        with self.assertRaises(ReadError) as caught:
-            read_order(ClientAPI(lambda request: response), case["order_id"])
-        self.assertIn("*:extra_forbidden", str(caught.exception))
-        self.assertNotIn("private-account", str(caught.exception))
+        result = read_order(ClientAPI(lambda request: response), case["order_id"])
+        # The authorized record retains raw evidence; diagnostics expose only
+        # known field paths and error types, without echoing unknown metadata.
+        self.assertEqual(result["private-account-key"], "private-account-value")
+        warning = result["response_warnings"][-1]
+        self.assertEqual(warning["validation_issues"], [{"path": "*", "type": "extra_forbidden"}])
+        self.assertNotIn("private-account", json.dumps(warning))
 
     def test_missing_required_order_field_is_still_rejected_with_safe_location(self):
         kit, runtime, requests = reference_kit()

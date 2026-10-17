@@ -1,7 +1,8 @@
-"""Decode SDK scalar representations only at documented response field paths.
+"""Decode SDK scalars and observed operation-specific response representations.
 
-No identifiers, customer language, enum values, option strings or shapes are
-rewritten. Normal strict OpenAPI models still validate the resulting record.
+No identifiers, customer language, enum values or option strings are rewritten.
+The observed getOrder orderStatus field is mapped at that operation only;
+normal strict OpenAPI models still validate every resulting record.
 """
 from copy import deepcopy
 from decimal import Decimal
@@ -32,12 +33,13 @@ def _number(raw, path):
     return value
 
 
-def normalize_response(body):
+def normalize_response(body, *, operation=None):
     """Return a copy with exact SDK strings decoded at schema-defined leaves.
 
     A field may occur in several read/write response schemas. Shapes, required
     keys, operation-specific fields and resource matching are checked separately
-    by the original strict model; this function never removes unknown fields.
+    by the original strict model. Only getOrder's observed orderStatus alias is
+    consumed; all other unknown fields remain subject to strict validation.
     """
     result = deepcopy(body)
     warnings = []
@@ -58,6 +60,10 @@ def normalize_response(body):
         warnings.append({"code": code, "path": path, "original_value": raw})
 
     if isinstance(result, dict):
+        if operation == "getOrder" and "orderStatus" in result and "status" not in result:
+            result["status"] = result.pop("orderStatus")
+            warnings.append({"code": "observed_order_status_alias", "path": "status",
+                             "source_path": "orderStatus"})
         methods = result.get("payment_methods")
         if isinstance(methods, list):
             for i, method in enumerate(methods):

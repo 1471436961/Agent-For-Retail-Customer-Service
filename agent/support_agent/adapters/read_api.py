@@ -30,12 +30,12 @@ def _read(client_api, operation, method, path, *, body=None):
     try:
         if not isinstance(response.body, dict):
             raise ReadError("invalid_read_response", operation=operation)
-        body, warnings = normalize_response(response.body)
+        body, warnings = normalize_response(response.body, operation=operation)
         READ_MODELS[operation].model_validate(body)
     except ValidationError as error:
         raise ReadError("invalid_read_response", operation=operation,
                         validation_issues=validation_issues(error, READ_MODELS[operation]),
-                        response_shape=response_shape(body, READ_MODELS[operation])
+                        response_shape=response_shape(response.body, READ_MODELS[operation])
                         if operation == "getOrder" else None) from None
     except ResponseValueError as error:
         raise ReadError("invalid_read_response", operation=operation,

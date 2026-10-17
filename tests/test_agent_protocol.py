@@ -155,6 +155,42 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(self.provider.call_args.kwargs["reasoning_effort"], "low")
         self.assertEqual(self.provider.call_args.kwargs["max_tokens"], 321)
 
+    def test_platform_allowed_kimi_is_preferred_with_host_parameters_preserved(self):
+        agent = self.build(self.make_context(models=[
+            {"model": "openai/enterprise-haiku", "constraints": {"max_tokens": 1024}},
+            {"model": "openai/kimi-k2.6", "constraints": {"max_tokens": 2048}},
+        ]))
+        self.assertEqual(agent.gateway.model, "openai/kimi-k2.6")
+        self.assertEqual(agent.gateway.options, {})
+        with patch.object(type(agent.context.model_gateway), "generate", autospec=True) as gateway:
+            gateway.return_value = text_reply()
+            agent.generate_next_message(user(), agent.get_init_state())
+        self.assertEqual(gateway.call_args.kwargs["model"], "openai/kimi-k2.6")
+        for name in ("api_key", "api_base", "base_url", "max_tokens", "thinking"):
+            self.assertNotIn(name, gateway.call_args.kwargs)
+        agent.generate_next_message(user(), agent.get_init_state())
+        self.assertEqual(self.provider.call_args.kwargs["model"], "openai/kimi-k2.6")
+        self.assertEqual(self.provider.call_args.kwargs["max_tokens"], 2048)
+
+    def test_model_preference_does_not_bypass_injected_host_alias(self):
+        agent = self.build(self.make_context(models=[
+            {"model": "host/configured-model", "constraints": {"max_tokens": 876}},
+        ]))
+        self.assertEqual(agent.gateway.model, "host/configured-model")
+        agent.generate_next_message(user(), agent.get_init_state())
+        self.assertEqual(self.provider.call_args.kwargs["model"], "host/configured-model")
+        self.assertEqual(self.provider.call_args.kwargs["max_tokens"], 876)
+
+    def test_ambiguous_kimi_configuration_cannot_override_gateway_constraints(self):
+        agent = self.build(self.make_context(models=[
+            {"model": "openai/kimi-k2.6", "constraints": {"max_tokens": 11}},
+            {"model": "openai/kimi-k2.6", "constraints": {"max_tokens": 22}},
+            {"model": "host/configured-model", "constraints": {"max_tokens": 33}},
+        ]))
+        self.assertEqual(agent.gateway.model, "host/configured-model")
+        agent.generate_next_message(user(), agent.get_init_state())
+        self.assertEqual(self.provider.call_args.kwargs["max_tokens"], 33)
+
     def test_ambiguous_model_configuration_fails_before_provider(self):
         with self.assertRaisesRegex(ValueError, "ambiguous"):
             self.build(self.make_context(models=[

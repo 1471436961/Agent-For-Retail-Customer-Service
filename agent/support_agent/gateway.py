@@ -10,6 +10,7 @@ from pydantic import Field, create_model
 from tau2.data_model.message import MultiToolMessage, ToolMessage
 from support_agent.state import decode
 from support_agent.adapters.change_tools import ACTION_NAMES
+from support_agent.config import PREFERRED_MODEL
 
 
 @dataclass(frozen=True)
@@ -56,7 +57,12 @@ class GatewayAdapter:
     def _select_configuration(self):
         # Preflight only: enumerate teacher-allowed choices, never generate a
         # response or pass pinned values. The gateway determines uniqueness.
-        for model in self.gateway.available_models:
+        # Prefer the user's selected Kimi only when the host actually permits
+        # it. Keep full injected IDs and stable ordering for every other model;
+        # a host alias need not expose its backing provider/model name.
+        models = sorted(self.gateway.available_models,
+                        key=lambda model: model.rsplit("/", 1)[-1] != PREFERRED_MODEL)
+        for model in models:
             for config in self.gateway.models:
                 if config.model != model:
                     continue

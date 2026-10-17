@@ -82,14 +82,8 @@ class ChangeTools(CustomerTools):
         parameters: address kinds need the complete address object; order kinds
         need order_id. cancel needs canonical reason; payment needs saved
         payment_method_id. modify_items/exchange need ordered replacements
-        [{existing_item_id,replacement_item_id,preserve_options}], one saved
-        payment_method_id. Each row's preserve_options lists only that item's
-        option keys the user wants unchanged; use [] if there are none. Keys
-        must exist on that original item. Different products can have different
-        keys. Top-level preserve_options is a shared union: each key
-        applies only to original items that have it, not to unrelated products.
-        Set that top-level list to [] when using only row-specific constraints.
-        These local constraints are not sent as business API request fields.
+        [{existing_item_id,replacement_item_id}], one payment_method_id and
+        preserve_options (option keys the user has NOT requested to change).
         return needs repeated item_ids and refund_payment_method_id. Optional
         specific_instance=true rejects ambiguous duplicate-ID instance selection.
         Collect the complete one-time item list before preparation. Identity,

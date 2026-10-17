@@ -1,17 +1,20 @@
 """Validate structured selectors and hold one backend-verified session identity."""
 
 from dataclasses import dataclass
+import json
 
 
 class ReadError(ValueError):
     """Safe tool-facing failure; never embeds backend text or record contents."""
 
-    def __init__(self, code, *, operation=None, http_status=None, api_code=None, validation_issues=None):
+    def __init__(self, code, *, operation=None, http_status=None, api_code=None, validation_issues=None,
+                 response_shape=None):
         self.code = code
         self.operation = operation
         self.http_status = http_status
         self.api_code = api_code
         self.validation_issues = validation_issues or []
+        self.response_shape = response_shape or []
         facts = [code]
         if operation:
             facts.append(f"operation={operation}")
@@ -22,6 +25,8 @@ class ReadError(ValueError):
         if self.validation_issues:
             facts.append("validation=" + ",".join(issue["path"] + ":" + issue["type"]
                                                  for issue in self.validation_issues))
+        if self.response_shape:
+            facts.append("response_shape=" + json.dumps(self.response_shape, ensure_ascii=True, separators=(",", ":")))
         super().__init__("; ".join(facts))
 
 

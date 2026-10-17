@@ -144,6 +144,45 @@ class ResponseValueTests(unittest.TestCase):
         self.assertIn("payments.0.amount:missing", str(caught.exception))
         self.assertNotIn(case["customer_id"], str(caught.exception))
 
+    def test_status_field_drift_exposes_observed_schema_without_guessing_an_alias(self):
+        kit, runtime, requests = reference_kit()
+        case = SEED["cases"][0]
+        response = runtime.dispatch({"method": "GET", "path": "/v1/orders/%23" + case["order_id"][1:]})
+        original = deepcopy(response)
+        # Synthetic drift names exercise diagnostics, not production aliases.
+        for field in ("order_phase", "lifecycle_state"):
+            changed = deepcopy(original)
+            observed = changed["body"].pop("status")
+            changed["body"][field] = observed
+            with self.subTest(field=field), self.assertRaises(ReadError) as caught:
+                read_order(ClientAPI(lambda request: changed), case["order_id"])
+            shape = caught.exception.response_shape
+            self.assertIn({"field": field, "type": "string", "observed_enum_value": observed}, shape)
+            self.assertEqual(caught.exception.validation_issues,
+                             [{"path": "status", "type": "missing"}, {"path": "*", "type": "extra_forbidden"}])
+            self.assertNotIn(case["customer_id"], str(caught.exception))
+            self.assertNotIn(case["order_id"], str(caught.exception))
+            self.assertNotIn("status", changed["body"])
+        self.assertEqual(response, original)
+
+    def test_order_shape_diagnostic_redacts_values_and_unsafe_keys_and_is_bounded(self):
+        from support_agent.adapters.response_values import response_shape
+        body = {"email": "private-email@example.test", "private_account_key": "delivered",
+                "customer_secret": "private-value", "customer_id": "private-customer",
+                "notes": "not a public enum", "payment": {"secret": "private-value"},
+                "active": False, "count": 3, "items": [], "unknown": None,
+                "unrecognized-field": "delivered"}
+        shape = response_shape(body, Order)
+        text = json.dumps(shape)
+        for value in ("private-email", "private-value", "private-customer", "private_account_key",
+                      "customer_secret", "unrecognized-field", "delivered", "not a public enum"):
+            self.assertNotIn(value, text)
+        self.assertIn({"field": "active", "type": "boolean"}, shape)
+        self.assertIn({"field": "count", "type": "number"}, shape)
+        self.assertIn({"field": "items", "type": "array"}, shape)
+        self.assertIn({"field": "unknown", "type": "null"}, shape)
+        self.assertEqual(len(response_shape({"field_" + str(i): "private-value" for i in range(100)}, Order)), 32)
+
     def test_removing_order_prefix_is_denied_without_a_second_order_get(self):
         kit, runtime, requests = serialized_reference_kit()
         case = SEED["cases"][0]

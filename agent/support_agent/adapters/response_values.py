@@ -7,6 +7,8 @@ from copy import deepcopy
 from decimal import Decimal
 import json
 import math
+import re
+from typing import get_args
 
 
 class ResponseValueError(ValueError):
@@ -95,3 +97,27 @@ def validation_issues(error, model):
     return [{"path": ".".join(str(part) if isinstance(part, int) or part in known else "*"
                               for part in row["loc"][:12]), "type": row["type"]}
             for row in error.errors(include_url=False, include_context=False, include_input=False)[:8]]
+
+
+def response_shape(body, model):
+    """Describe observed top-level fields without exposing customer values.
+
+    A public status enum value may be retained as diagnostic evidence only.
+    This function never maps a field, supplies defaults or authorizes a write.
+    """
+    if not isinstance(body, dict):
+        return []
+    status = model.model_fields.get("status")
+    status_values = get_args(status.annotation) if status is not None else ()
+    rows = []
+    for name, value in list(body.items())[:32]:
+        safe = (isinstance(name, str) and re.fullmatch(r"[A-Za-z_]{1,48}", name) and
+                not re.search(r"secret|password|token|credential|private|api_?key", name, re.I))
+        kind = ("null" if value is None else "boolean" if type(value) is bool else
+                "string" if isinstance(value, str) else "number" if type(value) in (int, float) else
+                "object" if isinstance(value, dict) else "array" if isinstance(value, list) else "unknown")
+        row = {"field": name if safe else "*", "type": kind}
+        if safe and isinstance(value, str) and value in status_values:
+            row["observed_enum_value"] = value
+        rows.append(row)
+    return rows

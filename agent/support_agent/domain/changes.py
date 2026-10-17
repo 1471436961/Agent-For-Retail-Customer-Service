@@ -2,7 +2,8 @@
 from collections import Counter
 from copy import deepcopy
 from pydantic import ValidationError
-from support_agent.adapters.read_models import Address, ItemReplacement
+from support_agent.adapters.read_models import Address
+from support_agent.adapters.change_parameters import ReplacementChoice
 from support_agent.domain.identity import ReadError, resource_id
 from support_agent.domain.money import calculate_values
 
@@ -72,20 +73,26 @@ def prepare(kit, kind, params):
         rows = params.get("replacements")
         require(isinstance(rows, list) and bool(rows), "complete_replacement_list_required")
         try:
-            rows = [ItemReplacement.model_validate(row).model_dump() for row in rows]
+            choices = [ReplacementChoice.model_validate(row).model_dump() for row in rows]
         except ValidationError:
             raise ReadError("invalid_replacements") from None
+        rows = [{key: choice[key] for key in ("existing_item_id", "replacement_item_id")} for choice in choices]
         _occurrences(order, [r["existing_item_id"] for r in rows], params.get("specific_instance", False))
+        preserve = params.get("preserve_options")
+        require(isinstance(preserve, list) and all(isinstance(k, str) for k in preserve), "invalid_preserved_options")
+        originals = [next(item for item in order["items"] if item["item_id"] == row["existing_item_id"]) for row in rows]
+        # A shared list is a union across different products, not a demand that
+        # every product expose every key. Still reject an entirely unknown key.
+        require(all(any(key in item["options"] for item in originals) for key in preserve), "required_option_changed")
         values = []
-        for row in rows:
-            old = next(item for item in order["items"] if item["item_id"] == row["existing_item_id"])
+        for row, choice, old in zip(rows, choices, originals):
             product = kit.get_product_variants(old["product_id"])
             target = next((i for i in product["items"] if i["item_id"] == row["replacement_item_id"]), None)
             require(target is not None and target["available"], "replacement_not_same_product_or_unavailable")
             require(target["item_id"] != old["item_id"], "unchanged_item")
-            preserve = params.get("preserve_options")
-            require(isinstance(preserve, list) and all(isinstance(k, str) for k in preserve), "invalid_preserved_options")
-            require(all(k in old["options"] and target["options"].get(k) == old["options"][k] for k in preserve), "required_option_changed")
+            required = [key for key in preserve if key in old["options"]] + choice["preserve_options"]
+            require(all(key in old["options"] and target["options"].get(key) == old["options"][key]
+                        for key in required), "required_option_changed")
             values.extend([target["price"], old["price"]])
             catalog.append({"product_id": product["product_id"], "target": target})
         calculations = [calculate_values("price_difference", values)]

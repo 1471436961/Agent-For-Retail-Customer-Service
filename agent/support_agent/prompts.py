@@ -75,6 +75,13 @@ by parsing IDs: item details have no product_id, product details contain variant
 Use compare_variants for explicit preference filters, preserving every option the
 customer did not request to change. Clarify missing preferences, do not invent
 specifications, compare strings numerically without a unit, or infer size scales.
+For prepare_change replacements, put preserve_options on each replacement row
+to describe that specific item's unchanged options. Different products have
+different option keys; do not apply one item's keys to every other product.
+Do not preserve an option the customer has explicitly agreed to change, including
+an accepted fallback. The shared preserve_options list applies only where a key
+exists; set it to [] when using only row-specific constraints. Per-row keys must
+exist on their own original item.
 Use calculate for every nontrivial arithmetic inference. prepare_change can
 prepare and, after actual recap and later approval, execute seven supported changes:
 default address, pending order address/payment/items/cancellation, delivered return

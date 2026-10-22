@@ -117,7 +117,8 @@ class OrderStatusAliasTests(unittest.TestCase):
         for item in (order["items"][0], order["items"][-1]):
             target = next(row for row in reader.get_product_variants(item["product_id"])["items"]
                           if row["available"] and row["item_id"] != item["item_id"])
-            rows.append({"existing_item_id": item["item_id"], "replacement_item_id": target["item_id"]})
+            rows.append({"existing_item_id": item["item_id"], "replacement_item_id": target["item_id"],
+                         "preserve_options": ["color"]})
         params = {"order_id": self.case["order_id"], "replacements": rows,
                   "payment_method_id": self.case["payment_method_ids"]["paypal"], "preserve_options": []}
         context = build_agent_context(domain="retail_plus", tools=list(kit.get_tools().values()),
@@ -158,7 +159,9 @@ class OrderStatusAliasTests(unittest.TestCase):
             _, state = agent.generate_next_message(MultiToolMessage(role="tool", tool_messages=[result]), state)
             self.assertIsNone(state["halt_reason"])
         self.assertEqual(len(writes()), 1)
-        self.assertEqual(writes()[0]["body"], {key: params[key] for key in ("replacements", "payment_method_id")})
+        self.assertEqual(writes()[0]["body"], {
+            "payment_method_id": params["payment_method_id"],
+            "replacements": [{key: row[key] for key in ("existing_item_id", "replacement_item_id")} for row in rows]})
         _, gold, _ = reference_kit()
         apply_native_reference(gold.environment.tools, "exchange", self.case["customer_id"], params)
         self.assertEqual(runtime.environment.get_db_hash(), gold.environment.get_db_hash())

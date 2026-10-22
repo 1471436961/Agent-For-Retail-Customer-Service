@@ -128,7 +128,9 @@ class OrderStatusAliasTests(unittest.TestCase):
         host = Environment("retail_plus", policy="", tools=kit)
         writes = lambda: [request for request in requests if request["method"] != "GET"
                           and request["path"] != "/v1/customers/search"]
-        incoming = UserMessage(role="user", content="Please exchange two items. My email is " + self.case["email"])
+        incoming = UserMessage(role="user", content=(
+            "Please prepare an exchange draft for the two selected items, using my saved PayPal. "
+            "Show me the details before I authorize submission. My email is " + self.case["email"]))
         state, history = agent.get_init_state(), []
         with patch("tau2.hyper.agent_context.generate") as model:
             for index, (name, args) in enumerate([
@@ -142,15 +144,21 @@ class OrderStatusAliasTests(unittest.TestCase):
                 reply, state = agent.generate_next_message(incoming, state)
                 result = host.get_response(reply.tool_calls[0])
                 self.assertFalse(result.error, result.content)
+                self.assertEqual(state["user_turn"], 1)
+                self.assertEqual(writes(), [])
                 history.extend([reply, result])
                 incoming = MultiToolMessage(role="tool", tool_messages=[result])
             recap, state = agent.generate_next_message(incoming, state)
             self.assertIn("Please confirm", recap.content)
+            self.assertIn("Is this the complete list", recap.content)
+            self.assertIn(params["payment_method_id"], recap.content)
+            self.assertEqual(state["user_turn"], 1)
             self.assertEqual(writes(), [])
             model.return_value = AssistantMessage(role="assistant", tool_calls=[ToolCall(
                 id="alias-execute", name="execute_exchange", arguments={"proposal_id": "proposal-1"})])
             reply, state = agent.generate_next_message(UserMessage(role="user",
                 content="This is the entire list. I approve this exact exchange."), state)
+            self.assertEqual(state["user_turn"], 2)
             result = host.get_response(reply.tool_calls[0])
             self.assertFalse(result.error, result.content)
             self.assertEqual(json.loads(result.content)["state"], "accepted")

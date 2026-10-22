@@ -92,7 +92,10 @@ class ChangeTools(CustomerTools):
         These local constraints are not sent as business API request fields.
         return needs repeated item_ids and refund_payment_method_id. Optional
         specific_instance=true rejects ambiguous duplicate-ID instance selection.
-        Collect the complete one-time item list before preparation. Identity,
+        Include all requested items whose choices have been specified. This is
+        a read-only draft: no approval or list-completeness affirmation is needed
+        to prepare it. Display it with review_change, then obtain confirmation
+        of the complete list and exact change before execute. Identity,
         ownership, status, catalog, quantities and finances are checked here.
         New preparation supersedes any unattempted proposal for the same target.
         """
@@ -123,6 +126,7 @@ class ChangeTools(CustomerTools):
 
         The Agent displays these fixed facts and asks for confirmation; this tool
         itself does not imply that a customer has seen or approved the proposal.
+        It requires no preliminary approval to display the read-only proposal.
         For one-time item changes the recap also asks if this is the complete list.
         """
         with self._lock:

@@ -22,6 +22,7 @@ def customer_facts(facts, outcome):
         summary.update(price_difference=outcome["receipt"]["exchange"]["price_difference"], settlement_method=facts["body"]["payment_method_id"],
                        requested_replacements=facts["body"]["replacements"],
                        notice="Exchange application accepted; no settlement or shipment completion confirmed.")
+        summary["refund_timing"] = "Not specified by the supplied exchange policy or receipt; do not apply cancellation or payment-replacement timing."
     elif kind == "modify_items":
         summary.update(price_difference=facts["calculations"][0]["result"], settlement_method=facts["body"]["payment_method_id"], status=outcome["receipt"]["status"])
     return summary

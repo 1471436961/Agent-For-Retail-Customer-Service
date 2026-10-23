@@ -3,7 +3,7 @@
 from support_agent.gateway import GatewayAdapter
 from support_agent.prompts import IDENTITY_PROMPT, SYSTEM_PROMPT
 from support_agent.state import (
-    ProtocolError, SessionState, initial_state, receive, record_reply, restore_history, review_text, receipt_text, store, normalize_call_ids,
+    ProtocolError, SessionState, initial_state, receive, record_reply, restore_history, pending_reviews, review_bundle_text, receipt_text, store, normalize_call_ids,
 )
 from tau2.data_model.message import AssistantMessage, SystemMessage
 from support_agent.adapters.conversation_api import TRANSFER_NOTICE
@@ -41,17 +41,26 @@ class RetailAgent:
             return self._stop(current, "invalid_host_sequence")
         if current.handoff in {"accepted", "unknown"}:
             return self._handoff_reply(current)
-        if current.review_to_display:
-            content = review_text(current.review_to_display)
-            if current.receipt_facts_to_display:
-                content += receipt_text(current.receipt_facts_to_display)
-            reply = AssistantMessage(role="assistant", content=content, timestamp=None)
-            record_reply(current, reply, self.gateway.actions_by_name)
-            return reply, current.model_dump(mode="json")
         if current.model_calls >= self.gateway.limits.max_model_calls:
             return self._stop(current, "model_call_limit")
         try:
             prompt = SYSTEM_PROMPT if current.verified_customer_id else IDENTITY_PROMPT
+            if current.proposals:
+                progress = [{"proposal_id": identifier, "kind": p["facts"]["kind"],
+                             "order_id": p["facts"]["order_id"], "state": p["state"],
+                             "displayed_at_user_turn": current.reviewed.get(identifier)}
+                            for identifier, p in current.proposals.items()]
+                prompt += "\nTrusted conversation progress (not customer consent): " + json.dumps(
+                    {"user_turn": current.user_turn, "changes": progress})
+            if current.review_to_display:
+                prompt += ("\nA complete verified proposal is ready to display. Answer the customer's "
+                           "outstanding questions using the policy and actual tool results, and explain the "
+                           "proposal now. Your text will be followed by its exact factual recap and final "
+                           "confirmation question, so do not duplicate that recap or question. "
+                           "Do not call review_change merely to fetch the same "
+                           "proposal again. Do not execute before it has been displayed and the customer "
+                           "subsequently clearly approves it. If facts need correction, invalidate or "
+                           "prepare the corrected proposal instead. Never say preparation submitted it.")
             actions = self.gateway.actions_for(current)
             messages = [SystemMessage(role="system", content=prompt + REPLY_INSTRUCTIONS, timestamp=None),
                         *self.gateway.project_history(current.history)]
@@ -80,6 +89,10 @@ class RetailAgent:
                         text = render_model_reply(reply.content)
                     except ValueError as error:
                         raise ProtocolError(str(error)) from None
+                    if current.review_to_display:
+                        recap = review_bundle_text(pending_reviews(current))
+                        if not text.endswith(recap):
+                            text += "\n\n" + recap
                     if current.receipt_facts_to_display:
                         text += receipt_text(current.receipt_facts_to_display)
                     reply = reply.model_copy(update={"content": text})

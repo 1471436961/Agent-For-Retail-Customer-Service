@@ -28,7 +28,7 @@ class ReplacementChoice(ItemReplacement):
 
 class ReplacementParameters(PaymentParameters):
     replacements: list[ReplacementChoice]
-    preserve_options: list[str]
+    preserve_options: list[str] = Field(default_factory=list)
     specific_instance: bool = False
 
 

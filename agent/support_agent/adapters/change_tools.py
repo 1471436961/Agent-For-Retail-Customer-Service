@@ -12,8 +12,9 @@ from support_agent.adapters.conversation_api import transfer_once
 from support_agent.domain.plans import order_requests
 from support_agent.domain.receipts import customer_facts
 from support_agent.adapters.change_parameters import ChangeParameters, PlanRequest
+from support_agent.domain.policy import service_policy
 
-PREPARATION_ACTION_NAMES = ("compare_variants", "calculate", "prepare_change")
+PREPARATION_ACTION_NAMES = ("compare_variants", "calculate", "get_service_policy", "prepare_change")
 REVIEW_ACTION_NAMES = ("review_change", "invalidate_change")
 PLAN_ACTION_NAMES = ("plan_changes", "prepare_plan_step", "abandon_plan", "get_service_status", "inspect_change_result", "transfer_to_human")
 EXECUTE_ACTIONS = {"execute_default_address": "default_address", "execute_order_address": "order_address", "execute_cancellation": "cancel",
@@ -76,6 +77,20 @@ class ChangeTools(CustomerTools):
         return calculate_values(operation, values)
 
     @is_tool(ToolType.READ)
+    def get_service_policy(self, operation: Literal["default_address", "order_address", "cancel", "payment", "modify_items", "return", "exchange"]) -> dict:
+        """Read the applicable supplied policy for an operation, including processing questions.
+
+        These are sourced course policy facts, not live backend/fulfillment facts.
+        Prepared proposals already include this policy, so do not fetch it again
+        unnecessarily. Use it for policy questions before preparation or when the
+        customer changes operation. No account data, inferred user consent or
+        writes. Cancellation refund timing does not govern returns/exchanges.
+        """
+        with self._lock:
+            self._customer_id()
+            return service_policy(operation)
+
+    @is_tool(ToolType.READ)
     def prepare_change(self, kind: Literal["default_address", "order_address", "cancel", "payment", "modify_items", "return", "exchange"], parameters: ChangeParameters) -> dict:
         """Prepare exactly one complete change, without performing any write.
 
@@ -94,8 +109,9 @@ class ChangeTools(CustomerTools):
         specific_instance=true rejects ambiguous duplicate-ID instance selection.
         Include all requested items whose choices have been specified. This is
         a read-only draft: no approval or list-completeness affirmation is needed
-        to prepare it. Display it with review_change, then obtain confirmation
-        of the complete list and exact change before execute. Identity,
+        to prepare it. Its successful result is ready for the Agent to explain
+        and display directly; a second review_change read is not required.
+        Then obtain confirmation of the complete list and exact change before execute. Identity,
         ownership, status, catalog, quantities and finances are checked here.
         New preparation supersedes any unattempted proposal for the same target.
         """
@@ -122,9 +138,11 @@ class ChangeTools(CustomerTools):
 
     @is_tool(ToolType.READ)
     def review_change(self, proposal_id: str) -> dict:
-        """Retrieve the exact prepared proposal for the Agent's full recap.
+        """Optionally retrieve an earlier prepared proposal to display it again.
 
-        The Agent displays these fixed facts and asks for confirmation; this tool
+        Successful preparation already supplies the proposal for immediate
+        display. Do not use this as an extra mandatory step after preparation.
+        The Agent displays its facts and asks for confirmation; this tool
         itself does not imply that a customer has seen or approved the proposal.
         It requires no preliminary approval to display the read-only proposal.
         For one-time item changes the recap also asks if this is the complete list.
@@ -320,7 +338,7 @@ class ChangeTools(CustomerTools):
 
     @is_tool(ToolType.READ)
     def inspect_change_result(self, proposal_id: str) -> dict:
-        """Inspect with existing customer/order reads, at most three times per proposal.
+        """Inspect with existing customer/order reads, without repeating the write.
 
         Preserves the original write outcome. Seeing a record is evidence, never
         proof of request identity or permission to retry an unknown write. No new
@@ -329,8 +347,6 @@ class ChangeTools(CustomerTools):
         with self._lock:
             proposal = self._proposal(proposal_id)
             count = self._inspections.get(proposal_id, 0)
-            if count >= 3:
-                raise ReadError("inspection_limit_no_additional_requests")
             self._inspections[proposal_id] = count + 1
             facts = proposal["facts"]
             observed = self.get_owned_order(facts["order_id"]) if facts["order_id"] else self._profile()

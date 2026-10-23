@@ -83,10 +83,9 @@ class OrchestrationTests(unittest.TestCase):
             observed = self.kit.inspect_change_result(p["proposal_id"])
             self.assertEqual(observed["state"], "unknown")
             self.assertEqual(observed["inspection_number"], count)
-        before = len(self.backend.calls)
-        with self.assertRaisesRegex(ReadError, "inspection_limit"):
-            self.kit.inspect_change_result(p["proposal_id"])
-        self.assertEqual(len(self.backend.calls), before)
+        observed = self.kit.inspect_change_result(p["proposal_id"])
+        self.assertEqual(observed["inspection_number"], 4)
+        self.assertEqual(observed["state"], "unknown")
         self.kit.execute_default_address(p["proposal_id"])
         self.assertEqual(len(self.backend.writes()), 1)
 

@@ -108,11 +108,11 @@ class FullRegressionTests(unittest.TestCase):
                 found.add(identifier)
         self.assertEqual(len(found), 14)
 
-    def test_missing_preserved_options_or_nonboolean_instance_flag_cannot_write(self):
+    def test_optional_preserved_options_and_invalid_instance_flag_do_not_write(self):
         params = {"order_id": "#P0-PENDING", "replacements": [{"existing_item_id": "p0_shirt_s_blue", "replacement_item_id": "p0_shirt_m_blue"}], "payment_method_id": "p0_card"}
-        for values in (params, {**params, "preserve_options": [], "specific_instance": "yes"}):
-            with self.assertRaises(ReadError):
-                self.kit.prepare_change("modify_items", values)
+        self.assertEqual(self.kit.prepare_change("modify_items", params)["state"], "prepared")
+        with self.assertRaises(ReadError):
+            self.kit.prepare_change("modify_items", {**params, "specific_instance": "yes"})
         self.assertEqual(self.backend.writes(), [])
 
     def test_malformed_model_and_bad_host_sequence_keep_zero_writes_and_safe_reason(self):

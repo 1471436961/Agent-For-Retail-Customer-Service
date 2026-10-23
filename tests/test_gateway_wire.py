@@ -122,7 +122,7 @@ class GatewayWireTests(unittest.TestCase):
                              ["address_line_1", "city", "region", "country", "postal_code"])
             self.assertTrue(definitions["CancellationParameters"]["additionalProperties"] is False)
             self.assertEqual(definitions["ReplacementParameters"]["required"],
-                             ["order_id", "payment_method_id", "replacements", "preserve_options"])
+                             ["order_id", "payment_method_id", "replacements"])
             self.assertEqual(definitions["ReplacementChoice"]["required"],
                              ["existing_item_id", "replacement_item_id"])
             self.assertEqual(definitions["ReplacementChoice"]["properties"]["preserve_options"]["type"], "array")

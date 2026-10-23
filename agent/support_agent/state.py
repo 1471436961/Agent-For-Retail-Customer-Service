@@ -5,6 +5,7 @@ import json
 from support_agent.adapters.change_tools import EXECUTE_ACTIONS
 from support_agent.adapters.conversation_api import TRANSFER_NOTICE
 from support_agent.domain.gateway_failure import GatewayDiagnostic
+from support_agent.domain.presentation import review_text, legacy_review_text
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from tau2.data_model.message import (
@@ -61,6 +62,24 @@ def store(state, message):
     state.history.append(message.model_dump(mode="json", exclude_none=True))
 
 
+def pending_reviews(state):
+    if not state.review_to_display:
+        return []
+    return [proposal for identifier, proposal in state.proposals.items()
+            if proposal["state"] == "prepared" and identifier not in state.reviewed]
+
+
+def review_bundle_text(proposals):
+    if len(proposals) == 1:
+        return review_text(proposals[0])
+    # This combines trusted record presentations, not user-language parsing.
+    sections = [review_text(proposal).rsplit("\n", 1)[0] for proposal in proposals]
+    question = "Please confirm these exact changes."
+    if any(p["facts"]["kind"] in {"modify_items", "return", "exchange"} for p in proposals):
+        question += " Are these the complete item lists for the one-time requests?"
+    return "\n\n".join([*sections, question])
+
+
 def receive(state, message):
     """Associate every host result with the complete pending assistant batch."""
     message = decode(message)
@@ -81,6 +100,10 @@ def receive(state, message):
         for result in results:
             call = calls.get(result.id)
             if result.error or not call:
+                if call and call["name"] in EXECUTE_ACTIONS:
+                    # An execution error supplies no successful receipt. Never
+                    # let the old display record authorize another attempt.
+                    state.reviewed.pop(call["arguments"].get("proposal_id"), None)
                 if call and call["name"] == "get_customer_summary":
                     state.customer_profile_loaded = False
                     state.customer_email = None
@@ -114,22 +137,44 @@ def receive(state, message):
                 if isinstance(identifier, str) and isinstance(body.get("facts"), dict):
                     target = body["facts"].get("order_id")
                     for previous_id, previous in state.proposals.items():
-                        if previous["facts"].get("order_id") == target:
+                        if previous["facts"].get("order_id") == target and previous.get("state") == "prepared":
                             state.reviewed.pop(previous_id, None)
+                            previous["state"] = "superseded"
                     state.proposals[identifier] = body
+                    # The successful preparation already contains the complete
+                    # verified proposal. No second tool read is required to show it.
+                    state.review_to_display = body
             elif call["name"] == "review_change":
                 proposal = body.get("review")
                 identifier = call["arguments"].get("proposal_id")
+                state.reviewed.pop(identifier, None)
                 if proposal == state.proposals.get(identifier) and proposal and proposal.get("state") == "prepared":
                     state.review_to_display = proposal
             elif call["name"] == "invalidate_change":
-                state.reviewed.pop(call["arguments"].get("proposal_id"), None)
+                identifier = call["arguments"].get("proposal_id")
+                state.reviewed.pop(identifier, None)
+                if identifier in state.proposals:
+                    state.proposals[identifier]["state"] = body.get("state", "withdrawn")
+                if state.review_to_display and state.review_to_display["proposal_id"] == identifier:
+                    state.review_to_display = None
             elif call["name"] in EXECUTE_ACTIONS:
-                state.reviewed.pop(call["arguments"].get("proposal_id"), None)
+                identifier = call["arguments"].get("proposal_id")
+                state.reviewed.pop(identifier, None)
+                if identifier in state.proposals:
+                    state.proposals[identifier]["state"] = body.get("state", "unknown")
                 if isinstance(body.get("customer_facts"), dict):
                     state.receipt_facts_to_display.append(body["customer_facts"])
             elif call["name"] in {"abandon_plan", "transfer_to_human"}:
-                state.reviewed = {}
+                if call["name"] == "abandon_plan":
+                    ids = {step.get("proposal_id") for step in body.get("steps", []) if step.get("state") == "paused"}
+                else:
+                    ids = set(state.proposals)
+                for identifier in ids:
+                    state.reviewed.pop(identifier, None)
+                    if identifier in state.proposals and state.proposals[identifier]["state"] == "prepared":
+                        state.proposals[identifier]["state"] = "paused"
+                if state.review_to_display and state.review_to_display["proposal_id"] in ids:
+                    state.review_to_display = None
                 if call["name"] == "transfer_to_human":
                     state.handoff = body.get("state")
         state.pending_calls = []
@@ -176,7 +221,8 @@ def record_reply(state, reply, actions, *, live=False):
             identifier = call.arguments.get("proposal_id")
             proposal = state.proposals.get(identifier)
             if (identifier not in state.reviewed or state.user_turn <= state.reviewed[identifier] or
-                    not proposal or proposal["facts"].get("kind") != EXECUTE_ACTIONS[call.name]):
+                    not proposal or proposal.get("state") != "prepared" or
+                    proposal["facts"].get("kind") != EXECUTE_ACTIONS[call.name]):
                 raise ProtocolError("Execution requires the exact displayed proposal and later user input")
     if calls:
         # Historical provider messages can contain narration alongside calls.
@@ -190,12 +236,22 @@ def record_reply(state, reply, actions, *, live=False):
         state.tool_rounds += 1
         state.request_tool_rounds += 1
     if state.review_to_display and has_text and not calls:
-        identifier = state.review_to_display["proposal_id"]
-        expected = review_text(state.review_to_display)
-        if reply.content != expected + (receipt_text(state.receipt_facts_to_display) if state.receipt_facts_to_display else ""):
+        proposals = pending_reviews(state)
+        expected = review_bundle_text(proposals)
+        suffix = receipt_text(state.receipt_facts_to_display) if state.receipt_facts_to_display else ""
+        displayed = reply.content.endswith(expected + suffix)
+        if not live:
+            # An older trajectory may have displayed only the last proposal.
+            legacy = state.review_to_display
+            if not displayed and any(reply.content.endswith(text + suffix) for text in
+                                     (review_text(legacy), legacy_review_text(legacy))):
+                proposals, displayed = [legacy], True
+        if displayed:
+            for proposal in proposals:
+                state.reviewed[proposal["proposal_id"]] = state.user_turn
+            state.review_to_display = None
+        elif live:
             raise ProtocolError("Review facts must actually be displayed")
-        state.reviewed = {identifier: state.user_turn}
-        state.review_to_display = None
     if state.handoff == "accepted" and reply.content != TRANSFER_NOTICE:
         raise ProtocolError("Accepted handoff requires exact notice")
     if has_text and not calls and state.receipt_facts_to_display and state.handoff not in {"accepted", "unknown"}:
@@ -229,18 +285,6 @@ def normalize_call_ids(state, reply):
             call = call.model_copy(update={"id": identifier})
         calls.append(call)
     return reply.model_copy(update={"tool_calls": calls})
-
-
-def review_text(proposal):
-    facts = proposal["facts"]
-    recap = {key: value for key, value in facts.items() if key != "snapshot"}
-    if facts["kind"] in {"modify_items", "return", "exchange"}:
-        recap["original_items"] = facts["snapshot"]["order"]["items"]
-        recap["replacement_details"] = facts["snapshot"]["catalog"]
-    ending = "Please confirm this exact change."
-    if facts["kind"] in {"modify_items", "return", "exchange"}:
-        ending += " Is this the complete list, or do you need any other item changes before this one-time request?"
-    return "Prepared change " + proposal["proposal_id"] + ":\n" + json.dumps(recap, ensure_ascii=False, indent=2) + "\n" + ending
 
 
 def receipt_text(facts):

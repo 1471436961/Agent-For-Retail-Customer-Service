@@ -28,7 +28,12 @@ class BusinessWriteTests(unittest.TestCase):
         _, text = self.host(self.decision(user("Show me exactly what changes."), "review_change", {"proposal_id": p["proposal_id"]}))
         if kind != "payment":
             self.assertIn("complete list", text.content)
-            self.assertEqual(json.loads(text.content.split(":\n", 1)[1].rsplit("\nPlease confirm", 1)[0])["body"], p["facts"]["body"])
+            for row in p["facts"]["body"].get("replacements", []):
+                self.assertIn(row["existing_item_id"], text.content)
+                self.assertIn(row["replacement_item_id"], text.content)
+            for identifier in p["facts"]["body"].get("item_ids", []):
+                self.assertIn(identifier, text.content)
+            self.assertIn(p["facts"]["body"].get("payment_method_id", p["facts"]["body"].get("refund_payment_method_id")), text.content)
         return p
 
     def executors(self):

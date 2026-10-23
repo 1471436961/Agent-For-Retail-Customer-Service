@@ -9,8 +9,9 @@ from pydantic import Field, create_model
 
 from tau2.data_model.message import MultiToolMessage, ToolMessage
 from support_agent.state import decode
-from support_agent.adapters.change_tools import ACTION_NAMES
+from support_agent.adapters.change_tools import ACTION_NAMES, EXECUTE_ACTIONS
 from support_agent.config import PREFERRED_MODEL
+from support_agent.domain.presentation import proposal_view
 
 
 @dataclass(frozen=True)
@@ -86,7 +87,15 @@ class GatewayAdapter:
                 return tuple(action for action in self.live_actions if action.name in {
                     "get_customer_summary", "transfer_to_human",
                 })
-            return self.live_actions
+            # Advertise executors only for a genuinely displayed proposal and
+            # a later customer turn. The model still interprets whether that
+            # turn actually authorizes this exact change. Preparation remains
+            # available when the customer changes their request.
+            ready_kinds = {proposal["facts"]["kind"] for identifier, proposal in state.proposals.items()
+                           if proposal["state"] == "prepared" and identifier in state.reviewed
+                           and state.user_turn > state.reviewed[identifier]}
+            return tuple(action for action in self.live_actions
+                         if action.name not in EXECUTE_ACTIONS or EXECUTE_ACTIONS[action.name] in ready_kinds)
         return tuple(action for action in self.live_actions if action.name in {
             "verify_customer", "transfer_to_human",
         })
@@ -120,8 +129,22 @@ class GatewayAdapter:
                 body = {"ok": False, "error": result.content}
             else:
                 try:
+                    actual = json.loads(result.content)
+                    def compact(proposal):
+                        view = proposal_view(proposal)
+                        view["parameters"] = proposal["parameters"]
+                        if "outcome" in proposal:
+                            view["outcome"] = proposal["outcome"]
+                        return view
+                    if isinstance(actual, dict):
+                        if {"proposal_id", "facts", "parameters"} <= actual.keys():
+                            actual = compact(actual)
+                        elif isinstance(actual.get("review"), dict):
+                            actual = {**actual, "review": compact(actual["review"])}
+                        elif isinstance(actual.get("changes"), list):
+                            actual = {**actual, "changes": [compact(p) for p in actual["changes"]]}
                     body = {"ok": True, "evidence_call_id": result.id,
-                            "result": json.loads(result.content)}
+                            "result": actual}
                 except (ValueError, TypeError):
                     body = {"ok": False, "error": "The tool returned invalid JSON."}
             return result.model_copy(update={"content": json.dumps(body, ensure_ascii=False)})

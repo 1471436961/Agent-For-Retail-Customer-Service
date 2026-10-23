@@ -6,6 +6,7 @@ from support_agent.adapters.read_models import Address
 from support_agent.adapters.change_parameters import ReplacementChoice
 from support_agent.domain.identity import ReadError, resource_id
 from support_agent.domain.money import calculate_values
+from support_agent.domain.policy import service_policy
 
 KINDS = ("default_address", "order_address", "cancel", "payment", "modify_items", "return", "exchange")
 
@@ -78,7 +79,7 @@ def prepare(kit, kind, params):
             raise ReadError("invalid_replacements") from None
         rows = [{key: choice[key] for key in ("existing_item_id", "replacement_item_id")} for choice in choices]
         _occurrences(order, [r["existing_item_id"] for r in rows], params.get("specific_instance", False))
-        preserve = params.get("preserve_options")
+        preserve = params.get("preserve_options", [])
         require(isinstance(preserve, list) and all(isinstance(k, str) for k in preserve), "invalid_preserved_options")
         originals = [next(item for item in order["items"] if item["item_id"] == row["existing_item_id"]) for row in rows]
         # A shared list is a union across different products, not a demand that
@@ -96,6 +97,10 @@ def prepare(kit, kind, params):
             values.extend([target["price"], old["price"]])
             catalog.append({"product_id": product["product_id"], "target": target})
         calculations = [calculate_values("price_difference", values)]
+        calculations.extend([
+            {"purpose": "replacement_total", **calculate_values("sum", values[::2])},
+            {"purpose": "original_total", **calculate_values("sum", values[1::2])},
+        ])
         method = _method(profile, params.get("payment_method_id"))
         _balance(method, calculations[0]["result"])
         body = {"replacements": rows, "payment_method_id": method["id"]}
@@ -103,7 +108,8 @@ def prepare(kit, kind, params):
             "order_id": order["order_id"] if order else None, "body": deepcopy(body),
             "calculations": calculations, "snapshot": {"profile": profile, "order": order, "catalog": catalog},
             "instance_selection": "ID-only; exact instance unavailable" if params.get("specific_instance") else "ordered ID occurrences",
-            "application": "request accepted, not refunded" if kind in {"return", "exchange"} else "record change"}
+            "application": "draft only; not submitted; no business record or funds changed",
+            "policy": service_policy(kind)}
 
 
 def _method(profile, identifier):

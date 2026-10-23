@@ -132,6 +132,9 @@ class ContractBoundaryTests(unittest.TestCase):
         proposal, state = self.reviewed_cancellation()
         history = state["history"][:-1]
         narration = state["history"][-1]["content"]
+        for event in history:
+            if event.get("role") == "assistant" and event.get("content") and not event.get("tool_calls"):
+                event["content"] = "Preparatory discussion; no change recap displayed."
         history.extend([AssistantMessage(role="assistant", content=narration, tool_calls=[
             ToolCall(id="historical-catalog", name="list_products", arguments={})]).model_dump(mode="json"),
             ToolMessage(role="tool", id="historical-catalog", content='{"products":[]}').model_dump(mode="json")])
@@ -139,10 +142,11 @@ class ContractBoundaryTests(unittest.TestCase):
         self.assertEqual(restored["reviewed"], {})
         self.assertEqual(restored["review_to_display"]["proposal_id"], proposal["proposal_id"])
         calls = self.provider.call_count
+        self.provider.return_value = wire.completion(content="Let me explain the proposed cancellation.")
         reply, restored = self.agent.generate_next_message(
             UserMessage(role="user", content="Please continue."), restored)
-        self.assertEqual(reply.content, narration)
-        self.assertEqual(self.provider.call_count, calls)
+        self.assertTrue(reply.content.endswith(narration[narration.index("Prepared change"):]))
+        self.assertEqual(self.provider.call_count, calls + 1)
         self.assertIn(proposal["proposal_id"], restored["reviewed"])
         self.assertEqual(self.backend.writes(), [])
 

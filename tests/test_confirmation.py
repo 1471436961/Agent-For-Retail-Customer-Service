@@ -67,8 +67,12 @@ class ConfirmationTests(unittest.TestCase):
         return p
 
     def test_unreviewed_forged_or_no_later_user_input_never_reaches_host(self):
-        p = self.prepared()
-        reply = self.decision(user("yes"), "execute_default_address", {"proposal_id": p["proposal_id"]})
+        pending = self.decision(user("Prepare this address."), "prepare_change",
+                                {"kind": "default_address", "parameters": {"address": self.address}})
+        c = pending.tool_calls[0]
+        p = self.tools[c.name](**c.arguments)
+        self.provider.return_value = calls_reply(call("too-early", name="execute_default_address", arguments={"proposal_id": p["proposal_id"]}))
+        reply, self.state = self.agent.generate_next_message(results(tool_result(c.id, json.dumps(p))), self.state)
         self.assertFalse(reply.tool_calls)
         self.assertEqual(self.backend.writes(), [])
         self.setUp()

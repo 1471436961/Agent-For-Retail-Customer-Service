@@ -121,14 +121,29 @@ class CustomerTools(ClientAPIToolKitBase):
             return self._profile()
 
     @is_tool(ToolType.READ)
-    def list_customer_orders(self) -> dict:
-        """List all order identifiers in the verified customer's current profile.
+    def list_customer_orders(self, include_details: bool = False) -> dict:
+        """List the verified customer's orders; optionally read every owned order.
 
-        No inferred dates or recency ordering are added. Select relevant IDs with
-        the customer, then use get_owned_order to obtain current order details.
+        Use include_details=true when the customer does not know which order
+        contains their items. The model matches requested items from actual
+        records instead of asking the customer to guess from order IDs.
+        Uses existing getOrder calls only, checks every order's ownership, and
+        preserves occurrences, recorded prices and statuses. No inferred dates
+        or recency ordering. A failed read fails the call, never silently drops
+        an order or returns a falsely complete result. Performs no writes.
         """
         with self._lock:
-            return {"order_ids": self._profile()["order_ids"]}
+            profile = self._profile()
+            result = {"order_ids": profile["order_ids"]}
+            if include_details:
+                orders = []
+                for identifier in profile["order_ids"]:
+                    order = read_order(self.client_api, identifier)
+                    if order["customer_id"] != self._customer_id():
+                        raise ReadError("order_access_denied")
+                    orders.append(order)
+                result["orders"] = orders
+            return result
 
     @is_tool(ToolType.READ)
     def get_owned_order(self, order_id: str) -> dict:
@@ -185,17 +200,20 @@ class CustomerTools(ClientAPIToolKitBase):
             return read_catalog_item(self.client_api, item_id)
 
     @is_tool(ToolType.READ)
-    def get_catalog_summary(self) -> dict:
-        """Count all product types, all variants and available variants separately.
+    def get_catalog_summary(self, product_id: str = "") -> dict:
+        """Count product types, total variants and available variants separately.
 
-        Reads the complete list and every product's details. Counts are derived
+        For a named product, first find its real ID, then pass product_id to
+        count that product only (e.g. available T-shirt variants). Empty
+        product_id counts the whole store using every product's details.
+        Counts are derived
         from actual records; they are tool output fields, not additional REST
         fields. Failure yields no partial or hardcoded count. Performs no writes.
         """
         with self._lock:
             self._customer_id()
-            summaries = read_products(self.client_api)["products"]
-            ids = [product["product_id"] for product in summaries]
+            ids = ([resource_id(product_id)] if product_id else
+                   [product["product_id"] for product in read_products(self.client_api)["products"]])
             if len(ids) != len(set(ids)):
                 raise ReadError("invalid_read_response", operation="listProducts")
             products = [read_product(self.client_api, product_id) for product_id in ids]

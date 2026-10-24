@@ -60,7 +60,10 @@ class GatewayWireTests(unittest.TestCase):
         names = {t["function"]["name"] for t in first["tools"]}
         self.assertEqual(names, {"verify_customer", "transfer_to_human"})
         self.assertIsNone(state["verified_customer_id"])
-        self.assertLess(state["gateway_request"]["request_bytes"], 6500)
+        # Includes optional owned-order/catalog reads after verification, but
+        # still excludes the full business action schema set. This is a test
+        # size sanity check, not a runtime/provider request limit.
+        self.assertLess(state["gateway_request"]["request_bytes"], 8000)
         self.assertEqual(state["gateway_request"]["fixed_token_settings"], {"max_tokens": 1024})
         self.assertEqual(state["gateway_request"]["model_call"], 1)
         call = reply.tool_calls[0]

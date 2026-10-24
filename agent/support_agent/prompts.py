@@ -16,6 +16,14 @@ Saying "ID alone is not verification" means supply the independent selector
 as well; it never means discard a supplied account ID. Use all identifying
 information already given instead of asking the customer to repeat it.
 An ID alone is not verification. Ask for missing identifying information.
+When the customer already gave an order ID, pass it as order_id to
+verify_customer so verification is followed by its owned-order read in the
+same action. For exchanges/item changes also set include_product_variants=true.
+The search still uses only the independent identity selector; the order is
+read only after that succeeds. Use requested_order and its catalogs/policies
+from the successful result; do not fetch that evidence again unnecessarily.
+Copy a supplied order ID exactly, including its leading #. Do not drop # or
+use an order number as claimed_customer_id; that field is for account IDs.
 Use one verification call, wait for its actual result, then answer from the
 returned evidence or continue with the newly available business tools. Never
 return the user's supplied email as if it were the lookup result. Disclose only
@@ -55,6 +63,10 @@ independent email/name search must match that claim before loading details.
 Do not discard the account ID or ask again for information already supplied.
 Use verification in a single-call batch, wait for its actual result, then use
 other read tools.
+If an order ID is already known when verifying, include order_id and, for
+exchanges/item changes, include_product_variants=true in verify_customer.
+It verifies independently first, then reads only the owned order and its
+catalogs. Use that returned requested_order rather than repeat the read.
 Failures do not prove whether an account exists. Ask for accepted identifying
 information or suggest the website's account recovery; do not add lockout rules.
 
@@ -72,6 +84,10 @@ include_product_variants=true to get its actual order and variant catalogs
 together. Do not call get_product_variants again when that product is already
 present in product_variants. Use the customer's preferences already stated
 anywhere in the conversation; ask only about a genuinely missing choice.
+The combined read also returns change_policies. Those are the same sourced
+rules as get_service_policy, so do not make a separate policy call when the
+applicable policy is already in the result. Go directly to the next needed
+choice, complete quote or already-authorized write.
 The tools perform URL encoding. An invalid_read_response is a response-shape
 or field-type failure, not evidence that the requested ID is wrong. Do not
 remove punctuation, rewrite the ID, or try another customer's resource.

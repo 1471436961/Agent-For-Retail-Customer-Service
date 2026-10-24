@@ -11,6 +11,7 @@ from support_agent.adapters.read_api import (
 from support_agent.domain.identity import (
     IdentityState, ReadError, identity_selector, resource_id, verification_failed,
 )
+from support_agent.domain.policy import service_policy
 
 READ_ACTION_NAMES = (
     "verify_customer", "lookup_customer", "get_customer_summary", "list_customer_orders",
@@ -67,7 +68,8 @@ class CustomerTools(ClientAPIToolKitBase):
 
     @is_tool(ToolType.READ)
     def verify_customer(self, email: str = "", first_name: str = "", last_name: str = "",
-                        postal_code: str = "", claimed_customer_id: str | None = None) -> dict:
+                        postal_code: str = "", claimed_customer_id: str | None = None,
+                        order_id: str = "", include_product_variants: bool = False) -> dict:
         """Verify the customer's independently supplied identity, then read their profile.
 
         Provide email alone OR all of first_name, last_name and postal_code. An
@@ -77,6 +79,13 @@ class CustomerTools(ClientAPIToolKitBase):
         If search verifies identity but profile loading fails, returns a verified
         receipt with profile_state="unavailable" and profile_error; no profile facts.
         Recover with get_customer_summary rather than repeating the search.
+        If the customer already supplied an order ID, include it as order_id
+        to read requested_order AFTER successful independent verification and
+        ownership checks, in this same read-only action. For an exchange/item
+        change also set include_product_variants=true. This returns the actual
+        order/catalog/policy evidence without extra model/tool round trips.
+        The optional order is not an identity selector. A failed optional read
+        returns requested_order_error without discarding verified profile facts.
         """
         selector = identity_selector(email, first_name, last_name, postal_code)
         if claimed_customer_id is not None and not isinstance(claimed_customer_id, str):
@@ -102,7 +111,7 @@ class CustomerTools(ClientAPIToolKitBase):
             # detail read; even a later transport/schema failure cannot switch it.
             self._identity.customer_id = found
             try:
-                return self._profile()
+                profile = self._profile()
             except ReadError as error:
                 # Independent verification succeeded. Preserve that evidence
                 # without claiming profile data was loaded or inventing values.
@@ -110,6 +119,13 @@ class CustomerTools(ClientAPIToolKitBase):
                         "verification": {"state": "verified", "profile_state": "unavailable"},
                         "profile_error": {"code": error.code, "operation": error.operation,
                                           "http_status": error.http_status}}
+            if order_id:
+                try:
+                    profile["requested_order"] = self.get_owned_order(order_id, include_product_variants)
+                except ReadError as error:
+                    profile["requested_order_error"] = {"code": error.code, "operation": error.operation,
+                                                        "http_status": error.http_status}
+            return profile
 
     @is_tool(ToolType.READ)
     def lookup_customer(self, customer_id: str, email: str = "") -> dict:
@@ -187,7 +203,10 @@ class CustomerTools(ClientAPIToolKitBase):
                     identifier = item["product_id"]
                     if identifier not in products:
                         products[identifier] = self.get_product_variants(identifier)
-                return {**order, "product_variants": list(products.values())}
+                kinds = ("return", "exchange") if order["status"] == "delivered" else (
+                    "order_address", "cancel", "payment", "modify_items") if order["status"] == "pending" else ()
+                return {**order, "product_variants": list(products.values()),
+                        "change_policies": {kind: service_policy(kind) for kind in kinds}}
             return order
 
     @is_tool(ToolType.READ)

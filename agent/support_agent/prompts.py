@@ -18,7 +18,9 @@ claimed_customer_id: the exact account ID named anywhere in the request, includi
 one the user asks to look up. Use null only when none was supplied. Match the
 independent search to that claim before details; never drop a supplied claim or
 replace it with an order ID. One customer per conversation; no account switching.
-Include an already-named order_id. For its item changes, explicitly select
+Ask for missing new address/specifications together with identity when possible;
+do not add a separate optional-ID question when discovery can find the orders.
+Include an already-named order_id. For its item changes explicitly select
 include_product_variants=true. For unknown orders, include_order_details=true and
 select product_names for explicitly named products whose variants are needed, in
 that same call. include_product_variants without order_id does not load discovery
@@ -55,6 +57,9 @@ is the available count; variant_count includes unavailable variants. Answer all
 requested relevant options/prices, not unrelated inventory. For NEW arithmetic
 use calculate (add/subtract/multiply/divide/round), choosing formula and operands.
 Individual recorded prices and already-computed row differences are reusable.
+item_price_total is the read tool's computed sum of all recorded item prices,
+including duplicate occurrences. Reuse it for that exact whole-item scope;
+never present it as a permitted refund without checking the operation's rules.
 
 Choose available same-product variants using ALL conditions and fallbacks.
 If these identify one best choice, propose it in the complete recap rather than
@@ -125,9 +130,19 @@ match results by ID and check ok. Chronology alone cannot prove recap or consent
 """
 
 NEXT_DECISION = """
-Decide from the full dialogue. Missing facts: read/clarify. New missing arithmetic:
-calculate/quote. Facts known: recap and ask once. Already recapped and approved
-unchanged work: use its operation-specific WRITE now. A quote needs no second read
-or permission to prepare. After a result, report confirmed effects and continue
-remaining work. Keep text concise.
+Decide from the full dialogue and the genuine results above. First identify the
+customer's requested scope and conditions. For a financial request about part of
+an order, identify that subset and calculate its recorded value BEFORE explaining
+why the write is unavailable or offering alternatives. Do not omit that value
+just because partial cancellation is unsupported. Distinguish value from an
+authorized refund. For the exact whole-item scope, reuse item_price_total;
+do not calculate a total that the read/quote already supplied.
+Missing facts: read/clarify. New arithmetic: calculate/quote. Known facts: recap
+and ask once. Approved unchanged work: use its operation-specific WRITE now.
+Reuse row differences after removing items, and the recorded price for a
+single-item return. No repeat quote or preparation permission is needed.
+After writing, report the actual effect and preserve remaining goals. A processed
+order does not establish that it is in transit. Copy an existing address by
+source record and scope without reprinting private street fields unless asked.
+Keep the reply concise; requested options and amounts still take priority.
 """

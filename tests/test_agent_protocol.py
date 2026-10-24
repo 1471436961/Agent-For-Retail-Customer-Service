@@ -207,7 +207,7 @@ class ProtocolTests(unittest.TestCase):
             results(tool_result("b", '{"email":"must-not-be-a-success"}', error=True), tool_result("a")), state,
         )
         messages = self.provider.call_args.kwargs["messages"]
-        projected = messages[-2:]
+        projected = [m for m in messages if m.role == "tool"][-2:]
         self.assertEqual([row.id for row in projected], ["b", "a"])
         self.assertFalse(json.loads(projected[0].content)["ok"])
         self.assertTrue(json.loads(projected[1].content)["ok"])
@@ -218,7 +218,7 @@ class ProtocolTests(unittest.TestCase):
         state = self.pending()
         self.provider.return_value = text_reply("The service result was invalid.")
         _, final = self.agent.generate_next_message(results(tool_result(content="not-json")), state)
-        projected = self.provider.call_args.kwargs["messages"][-1]
+        projected = next(m for m in reversed(self.provider.call_args.kwargs["messages"]) if m.role == "tool")
         self.assertFalse(json.loads(projected.content)["ok"])
         self.assertEqual(final["history"][-2]["tool_messages"][0]["content"], "not-json")
 

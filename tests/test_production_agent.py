@@ -6,6 +6,7 @@ understanding. Older executor/plan tests separately exercise compatibility.
 import json
 import unittest
 from copy import deepcopy
+from unittest.mock import patch
 import test_task_completion as completion
 from test_reference_runtime import reference_kit, apply_native_reference, legacy_address
 from tau2.data_model.message import UserMessage, AssistantMessage
@@ -21,6 +22,55 @@ class ProductionAgentTests(unittest.TestCase):
     decision = completion.TaskCompletionTests.decision
     result = completion.TaskCompletionTests.result
     writes = completion.TaskCompletionTests.writes
+
+    def test_tool_transport_excludes_provider_dump_and_keeps_native_usage(self):
+        self.build("return", compatibility=False)
+        self.model.return_value = AssistantMessage(role="assistant", tool_calls=[ToolCall(
+            id="metadata-boundary", name="verify_customer", arguments={"email":self.case["email"],
+            "claimed_customer_id":None})], usage={"prompt_tokens":18,"completion_tokens":9}, cost=0.01,
+            raw_data={"debug_object":object(),"repeated_provider_dump":"x"*100000})
+        call,self.state = self.agent.generate_next_message(UserMessage(role="user",content="Help with a return."),self.state)
+        self.assertIsNone(self.state["halt_reason"])
+        self.assertEqual(call.usage,{"prompt_tokens":18,"completion_tokens":9})
+        self.assertEqual(call.cost,0.01)
+        self.assertLess(len(json.dumps(self.state)),3000)
+        self.assertEqual(call.tool_calls[0].id,"metadata-boundary")
+        received = self.result(call)
+        self.assertEqual(json.loads(received.content)["customer_id"],self.case["customer_id"])
+
+    def test_invalid_model_reply_still_finalizes_a_readable_native_trajectory(self):
+        self.build("return",compatibility=False)
+        self.model.return_value=AssistantMessage(role="assistant",content=" ")
+        class Customer:
+            def get_init_state(self,message_history=None): return 0
+            def generate_next_message(self,message,state):
+                return UserMessage(role="user",content="Please help." if state==0 else "###STOP###"),state+1
+            def stop(self,*args): pass
+        task=Task(id="synthetic-invalid-reply-finalization",user_scenario=UserScenario(instructions="Synthetic protocol-failure trajectory"))
+        simulation=Orchestrator(domain="retail_plus",agent=self.agent,user=Customer(),environment=self.host,
+            task=task,max_steps=10,validate_communication=True).run()
+        self.assertEqual(simulation.termination_reason.value,"user_stop")
+        self.assertTrue(all(isinstance(m.timestamp,str) for m in simulation.messages))
+        self.assertIn("invalid_model_reply",simulation.messages[-2].content)
+        self.assertEqual(self.requests,[])
+
+    def test_unexpected_error_after_real_write_preserves_receipt_and_stops_automation(self):
+        received = self.read_request("order_address")
+        self.decision(received,text="Update only this order to "+json.dumps(self.params["address"])+". Approve this complete change?")
+        call = self.decision(UserMessage(role="user",content="I approve this exact change; submit it."),
+                             "update_order_address",self.params)
+        receipt = self.result(call)
+        self.assertEqual(json.loads(receipt.content)["state"],"completed")
+        with patch("support_agent.application.normalize_call_ids",side_effect=KeyError("private-debug-text")):
+            reply,self.state = self.agent.generate_next_message(receipt,self.state)
+        self.assertEqual(self.state["halt_reason"],"internal_error")
+        self.assertEqual(self.state["runtime_diagnostic"],{"stage":"validate_model_reply","exception_type":"KeyError"})
+        self.assertIn('"state": "completed"',reply.content)
+        self.assertNotIn("private-debug-text",json.dumps(self.state))
+        before = len(self.requests)
+        reply,self.state = self.agent.generate_next_message(UserMessage(role="user",content="Please continue."),self.state)
+        self.assertFalse(reply.tool_calls)
+        self.assertEqual(len(self.requests),before)
 
     def read_request(self, kind):
         self.build(kind, compatibility=False)
@@ -255,7 +305,7 @@ class ProductionAgentTests(unittest.TestCase):
             if choice:
                 name,args=completion.live_call(self.agent,choice[0],choice[1])
                 return AssistantMessage(role="assistant",tool_calls=[ToolCall(id=f"native-{index}",name=name,arguments=args)])
-            actual=json.loads(kwargs["messages"][-1].content)["result"]
+            actual=json.loads(next(m.content for m in reversed(kwargs["messages"]) if m.role == "tool"))["result"]
             if index==3:
                 return AssistantMessage(role="assistant",content="The complete exchange is "+json.dumps(actual["body"])+" with calculations "+json.dumps(actual["calculations"])+". Do you approve this full submission?")
             self.assertEqual(actual["state"],"accepted")

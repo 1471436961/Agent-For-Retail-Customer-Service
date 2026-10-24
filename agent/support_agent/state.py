@@ -33,6 +33,8 @@ class SessionState(BaseModel):
     protocol_diagnostic: str | None = None
     gateway_diagnostic: GatewayDiagnostic | None = None
     gateway_request: dict | None = None
+    runtime_phase: str | None = None
+    runtime_diagnostic: dict[str, str] | None = None
     verified_customer_id: str | None = None
     customer_profile_loaded: bool = False
     customer_email: str | None = None

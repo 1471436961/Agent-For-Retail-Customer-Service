@@ -119,7 +119,7 @@ class T1RepairTests(unittest.TestCase):
         reply = self.decide(actual, completion(content="email: " + self.case["email"], raw_text=True))
         self.assertEqual(reply.content, "email: " + self.case["email"])
         self.assertTrue(self.state["customer_profile_loaded"])
-        wire_result = self.provider.call_args.kwargs["messages"][-1]
+        wire_result = next(m for m in reversed(self.provider.call_args.kwargs["messages"]) if m["role"] == "tool")
         self.assertEqual(wire_result["tool_call_id"], source_id)
         self.assertEqual(json.loads(wire_result["content"])["evidence_call_id"], source_id)
         self.assertEqual(json.loads(wire_result["content"])["result"]["email"], self.case["email"])

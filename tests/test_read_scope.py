@@ -32,6 +32,22 @@ class ReadScopeTests(unittest.TestCase):
     def verify(self):
         return self.kit.verify_customer(email="alex.p0@example.test")
 
+    def test_read_item_total_counts_occurrences_without_netting_payments(self):
+        order = self.backend.records["orders"][0]
+        repeated = deepcopy(order["items"][0])
+        order["items"] = [{**deepcopy(repeated),"price":0.1},
+                          {**deepcopy(repeated),"price":0.2},
+                          {**deepcopy(repeated),"price":0.1}]
+        order["payments"] = [{"transaction_type":"payment","amount":999.0,
+                              "payment_method_id":self.customer["payment_methods"][0]["id"]}]
+        verified = self.kit.verify_customer(email=self.customer["email"],order_id=order["order_id"])
+        view = verified["requested_order"]
+        self.assertEqual(view["item_price_total"]["result"],0.4)
+        self.assertEqual(view["item_price_total"]["inputs"],[0.1,0.2,0.1])
+        self.assertEqual(len(view["items"]),3)
+        self.assertNotIn("item_price_total",order)
+        self.assertNotIn("item_price_total",self.kit._observed_orders[order["order_id"]])
+
     def test_email_matches_independently_before_profile(self):
         self.assertEqual(self.verify(), self.customer)
         self.assertEqual([(row["method"], row["path"]) for row in self.backend.calls],
@@ -184,6 +200,10 @@ class ReadScopeTests(unittest.TestCase):
         for identifier in ("#P0-PENDING", "#P0-AMBIGUOUS", "#P0-CANCELLED", "#P0-PROCESSED"):
             expected = next(order for order in self.backend.records["orders"] if order["order_id"] == identifier)
             actual = self.kit.get_owned_order(identifier)
+            total = actual.pop("item_price_total")
+            self.assertEqual(total["inputs"], [i["price"] for i in expected["items"]])
+            self.assertEqual(total["result"], round(sum(i["price"] for i in expected["items"]), 2))
+            self.assertNotIn("item_price_total", self.kit._observed_orders[identifier])
             self.assertEqual(actual, expected)
         repeated = self.kit.get_owned_order("#P0-AMBIGUOUS")["items"]
         self.assertEqual([item["price"] for item in repeated[:2]], [20.0, 18.0])

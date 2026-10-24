@@ -12,6 +12,7 @@ from support_agent.domain.identity import (
     IdentityState, ReadError, identity_selector, resource_id, verification_failed,
 )
 from support_agent.domain.policy import service_policy
+from support_agent.domain.money import calculate_values
 
 READ_ACTION_NAMES = (
     "verify_customer", "lookup_customer", "get_customer_summary", "list_customer_orders",
@@ -65,6 +66,20 @@ class CustomerTools(ClientAPIToolKitBase):
         profile = read_customer(self.client_api, self._customer_id())
         self._observed_profile = deepcopy(profile)
         return profile
+
+    @staticmethod
+    def _order_view(order):
+        """Add a general record subtotal, without deciding refund eligibility.
+
+        Raw observed records remain unchanged. Every item occurrence contributes
+        its recorded price; no payment/refund netting or category inference.
+        """
+        result = deepcopy(order)
+        prices = [item["price"] for item in order["items"]]
+        result["item_price_total"] = (calculate_values("add", prices, 2) if prices else
+            {"operation": "add", "inputs": [], "result": 0.0, "decimal_places": 2})
+        result["item_price_total"]["scope"] = "All recorded item occurrences; not refund eligibility or settlement. A selected subset needs its own calculation."
+        return result
 
     @is_tool(ToolType.READ)
     def verify_customer(self, email: str = "", first_name: str = "", last_name: str = "",
@@ -202,7 +217,7 @@ class CustomerTools(ClientAPIToolKitBase):
                     order = read_order(self.client_api, identifier)
                     if order["customer_id"] != self._customer_id():
                         raise ReadError("order_access_denied")
-                    orders.append(order)
+                    orders.append(self._order_view(order))
                     self._observed_orders[identifier] = deepcopy(order)
                 result["orders"] = orders
                 kinds = set()
@@ -247,7 +262,7 @@ class CustomerTools(ClientAPIToolKitBase):
         self._observed_orders[order_id] = deepcopy(order)
         kinds = ("return", "exchange") if order["status"] == "delivered" else (
             "order_address", "cancel", "payment", "modify_items") if order["status"] == "pending" else ()
-        result = deepcopy(order)
+        result = self._order_view(order)
         if include_product_variants:
             # Explicit related-catalog selection; never an automatic prefetch.
             products = {}

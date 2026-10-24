@@ -36,6 +36,20 @@ class RetailAgent:
     def generate_next_message(self, message, state):
         current = SessionState.model_validate(state).model_copy(deep=True)
         current.turn += 1
+        try:
+            return self._next_message(message, current)
+        except Exception as error:
+            # An unexpected Agent defect must not erase the dialogue or leak
+            # arbitrary exception text. Stop automation with genuine receipts
+            # preserved; this is diagnostic failure, never a successful result.
+            allowed = {"ValueError", "TypeError", "RuntimeError", "KeyError", "AttributeError",
+                       "IndexError", "StopIteration", "ValidationError", "PydanticSerializationError"}
+            kind = type(error).__name__
+            current.runtime_diagnostic = {"stage": current.runtime_phase or "entry",
+                "exception_type": kind if kind in allowed else "OtherError"}
+            return self._stop(current, "internal_error")
+
+    def _next_message(self, message, current):
         if current.handoff in {"accepted", "unknown"}:
             return self._handoff_reply(current)
         if current.halt_reason == "invalid_model_reply":
@@ -43,6 +57,7 @@ class RetailAgent:
         if current.halt_reason:
             return self._stop(current, current.halt_reason)
         try:
+            current.runtime_phase = "receive_host_message"
             receive(current, message)
         except ProtocolError:
             return self._stop(current, "invalid_host_sequence")
@@ -51,12 +66,12 @@ class RetailAgent:
         if current.model_calls >= self.gateway.limits.max_model_calls:
             return self._stop(current, "model_call_limit")
         try:
+            current.runtime_phase = "prepare_model_context"
             prompt = SERVICE_GOALS + (SYSTEM_PROMPT if current.verified_customer_id else IDENTITY_PROMPT)
             if current.verified_customer_id:
                 prompt += "\nApplicable business rules from the supplied materials: " + json.dumps(business_rules(), ensure_ascii=False)
             if current.verified_customer_id:
                 prompt += "\nRecorded evidence and outcomes: " + json.dumps(evidence_view(current))
-                prompt += NEXT_DECISION
             if current.protocol_diagnostic:
                 prompt += ("\nThe previous model draft was rejected before execution: " + current.protocol_diagnostic +
                            ". Continue the customer's actual request using verified facts and real approvals already in history. "
@@ -65,6 +80,8 @@ class RetailAgent:
             actions = self.gateway.actions_for(current)
             messages = [SystemMessage(role="system", content=prompt + REPLY_INSTRUCTIONS, timestamp=None),
                         *self.gateway.project_history(current.history)]
+            if current.verified_customer_id:
+                messages.append(SystemMessage(role="system", content=NEXT_DECISION, timestamp=None))
         except Exception as error:
             current.gateway_diagnostic = diagnose_gateway_failure(error, stage="history_projection")
             return self._stop(current, "gateway_failure")
@@ -72,6 +89,7 @@ class RetailAgent:
             current.model_calls += 1  # Count attempts, including corrections/failures.
             current.gateway_request = None
             try:
+                current.runtime_phase = "model_generation"
                 current.gateway_request = self.gateway.request_summary(messages, actions, current.model_calls)
                 reply = self.gateway.generate(messages, actions=actions)
             except Exception as error:
@@ -89,12 +107,17 @@ class RetailAgent:
                     return self._stop(current, "invalid_model_reply")
                 return self._stop(current, "gateway_failure")
             try:
+                current.runtime_phase = "validate_model_reply"
                 if isinstance(reply, AssistantMessage) and not reply.tool_calls and output_was_truncated(reply):
                     raise ProtocolError("Provider reported output truncation. No draft content or call was executed. Return a shorter complete reply within the unchanged token settings")
                 reply = normalize_call_ids(current, reply)
                 reply = bind_submission_reference(current, reply)
-                if isinstance(reply, AssistantMessage) and reply.tool_calls and reply.content:
-                    reply = reply.model_copy(update={"content": None})
+                if isinstance(reply, AssistantMessage) and reply.tool_calls:
+                    # Provider dumps duplicate calls and may contain large or
+                    # non-JSON debug objects. They are not conversation facts;
+                    # keep actual calls, native usage/cost and a finish flag.
+                    reply = reply.model_copy(update={"content": None,
+                        "raw_data": {"retail_output_truncated": output_was_truncated(reply)}})
                 if (isinstance(reply, AssistantMessage) and reply.tool_calls and
                         current.request_tool_rounds >= self.gateway.limits.max_tool_rounds):
                     return self._stop(current, "tool_round_limit")
@@ -130,6 +153,8 @@ class RetailAgent:
                 return self._stop(current, "invalid_model_reply")
             candidate.protocol_diagnostic = None
             candidate.gateway_diagnostic = None
+            candidate.runtime_phase = None
+            candidate.runtime_diagnostic = None
             return reply, candidate.model_dump(mode="json")
 
     @staticmethod
@@ -146,7 +171,7 @@ class RetailAgent:
     @staticmethod
     def _handoff_reply(state):
         text = TRANSFER_NOTICE if state.handoff == "accepted" else "The transfer outcome is unknown. I will stop automated operations and will not retry it."
-        reply = AssistantMessage(role="assistant", content=text, timestamp=None,
+        reply = AssistantMessage(role="assistant", content=text,
                                  raw_data={"retail_handoff_complete": state.handoff == "accepted"})
         record_reply(state, reply, {})
         return reply, state.model_dump(mode="json")
@@ -169,10 +194,13 @@ class RetailAgent:
                 "tool_round_limit": "I reached the Agent's configured tool-round limit for this request.",
                 "invalid_host_sequence": "I could not continue because the received message or tool results did not match the pending conversation step.",
                 "invalid_model_reply": "I could not continue because the model returned an invalid message or tool call.",
+                "internal_error": "An internal Agent error prevented continuation. Automated changes are stopped; no unconfirmed success is assumed.",
             }.get(reason, "I could not continue because the Agent encountered an internal error.")
         diagnostic = ""
         if reason == "invalid_model_reply" and state.protocol_diagnostic:
             diagnostic = " Validation: " + state.protocol_diagnostic
+        if reason == "internal_error" and state.runtime_diagnostic:
+            diagnostic = " Agent diagnostic: " + json.dumps(state.runtime_diagnostic, sort_keys=True)
         if reason == "gateway_failure" and state.gateway_diagnostic:
             diagnostic = " Service diagnostic: " + json.dumps(
                 state.gateway_diagnostic.model_dump(exclude_none=True), sort_keys=True,
@@ -181,7 +209,7 @@ class RetailAgent:
                 diagnostic += " Model request: " + json.dumps(state.gateway_request, sort_keys=True)
         facts = receipt_text(state.receipt_facts_to_display) if state.receipt_facts_to_display else ""
         reply = AssistantMessage(
-            role="assistant", timestamp=None,
+            role="assistant",
             content=explanation + f" Reason: {reason}." + diagnostic + facts,
         )
         if facts:

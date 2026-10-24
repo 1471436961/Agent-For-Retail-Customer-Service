@@ -158,7 +158,7 @@ class GatewayWireTests(unittest.TestCase):
             ToolMessage(role="tool", id=call.id, content=json.dumps(output), error=False)]), state)
         self.assertIsNone(state["halt_reason"])
         self.assertIn(customer["email"], reply.content)
-        wire_result = self.provider.call_args.kwargs["messages"][-1]
+        wire_result = next(m for m in reversed(self.provider.call_args.kwargs["messages"]) if m["role"] == "tool")
         self.assertEqual(wire_result["tool_call_id"], call.id)
         projected = json.loads(wire_result["content"])
         self.assertTrue(projected["ok"])
@@ -193,11 +193,11 @@ class GatewayWireTests(unittest.TestCase):
         self.assertIsNone(state["halt_reason"])
         self.assertIn(output["email"], reply.content)
         wire = self.provider.call_args.kwargs["messages"]
-        self.assertEqual([row["role"] for row in wire], ["system", "user", "assistant", "tool"])
-        self.assertEqual(wire[-2]["content"], assistant.content)
-        self.assertEqual(wire[-2]["tool_calls"][0]["id"], call.id)
-        self.assertEqual(wire[-1]["tool_call_id"], call.id)
-        self.assertTrue(json.loads(wire[-1]["content"])["ok"])
+        self.assertEqual([row["role"] for row in wire], ["system", "user", "assistant", "tool", "system"])
+        self.assertEqual(wire[-3]["content"], assistant.content)
+        self.assertEqual(wire[-3]["tool_calls"][0]["id"], call.id)
+        self.assertEqual(wire[-2]["tool_call_id"], call.id)
+        self.assertTrue(json.loads(wire[-2]["content"])["ok"])
         self.assertEqual(original, json.dumps(serialized))
         self.assertEqual([row["path"] for row in self.backend.calls],
                          ["/v1/customers/search", "/v1/customers/p0_customer_a"])
@@ -249,7 +249,7 @@ class GatewayWireTests(unittest.TestCase):
                 results.append(ToolMessage(role="tool", id=call.id, content=str(error), error=True))
         _, state = self.agent.generate_next_message(MultiToolMessage(role="tool", tool_messages=results), state)
         self.assertIsNone(state["halt_reason"])
-        wire = self.provider.call_args.kwargs["messages"][-2:]
+        wire = [m for m in self.provider.call_args.kwargs["messages"] if m["role"] == "tool"][-2:]
         self.assertEqual([m["tool_call_id"] for m in wire], ["wire-catalog", "wire-profile"])
         self.assertFalse(json.loads(wire[0]["content"])["ok"])
         self.assertTrue(json.loads(wire[1]["content"])["ok"])

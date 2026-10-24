@@ -334,3 +334,69 @@ class ServiceContinuityTests(unittest.TestCase):
         order = db.orders[self.case["order_id"]].model_dump()
         self.assertNotEqual(order["address"],original_order["address"])
         self.assertEqual({k:v for k,v in order.items() if k!="address"},{k:v for k,v in original_order.items() if k!="address"})
+
+    def test_native_routing_and_handoff_boundary_counts_required_messages(self):
+        # The local limit is a diagnostic input, not an assertion about the
+        # remote configuration. No read/quote/confirmation round is invented.
+        for identity_up_front,limit,expected in ((True,16,"agent_stop"),
+                                                  (False,16,"max_steps"),
+                                                  (False,17,"agent_stop")):
+            with self.subTest(identity_up_front=identity_up_front,limit=limit):
+                self.build("return",compatibility=False)
+                db = self.runtime.environment.tools.db
+                original = db.orders[self.case["order_id"]]
+                other = original.model_copy(deep=True)
+                other.order_id = "#SYNTHETIC-SECOND-ORDER"
+                for payment in other.payment_history:
+                    payment.payment_method_id = self.case["payment_method_ids"]["paypal"]
+                db.orders[other.order_id] = other
+                db.users[self.case["customer_id"]].orders.append(other.order_id)
+                requests = [{"kind":"return","parameters":{"order_id":o.order_id,
+                    "item_ids":[i.item_id for i in o.items],
+                    "refund_payment_method_id":o.payment_history[0].payment_method_id}}
+                    for o in (original,other)]
+                schedule = ([] if identity_up_front else ["identity"]) + [
+                    ("verify_customer",{"email":self.case["email"],"claimed_customer_id":None,"include_order_details":True}),
+                    "recap","routing",("submit_changes",{"requests":requests}),"receipts",
+                    ("transfer_to_human",{"basis":"explicit_request","summary":"Customer requests a human complaint after both returns were accepted."})]
+                initial = "Return both delivered orders."
+                script = ([initial+" My email is "+self.case["email"]] if identity_up_front else
+                          [initial,self.case["email"]]) + [
+                    "Please cross the refund destinations instead.",
+                    "Then submit both complete returns to the stated original methods. I approve.",
+                    "Now get me a human to complain."]
+                class Customer:
+                    def get_init_state(self,message_history=None): return 0
+                    def generate_next_message(self,message,state):
+                        return UserMessage(role="user",content=script[state]),state+1
+                    def stop(self,*args): pass
+                totals = {}
+                def provider(**kwargs):
+                    choice = schedule[self.model.call_count-1]
+                    if isinstance(choice,tuple):
+                        return AssistantMessage(role="assistant",tool_calls=[ToolCall(
+                            id=f"routing-{self.model.call_count}",name=choice[0],arguments=choice[1])])
+                    if choice == "identity":
+                        text = "Please provide your account email or full name and postal code."
+                    elif choice == "recap":
+                        body=json.loads(next(m.content for m in reversed(kwargs["messages"]) if m.role=="tool"))["result"]
+                        totals.update({o["order_id"]:o["item_price_total"]["result"]
+                                       for o in body["requested_context"]["orders"]})
+                        text = "Return these complete selected item lists to their original methods: "+json.dumps(requests)+"; recorded item totals "+json.dumps(totals)+". Instructions are provided by email. Request acceptance is not refund arrival. Do you approve?"
+                    elif choice == "routing":
+                        text = "Cross-routing these refunds is unsupported. The complete return lists and totals are unchanged; each must use its stated original method. Do you approve those returns?"
+                    else:
+                        body=json.loads(next(m.content for m in reversed(kwargs["messages"]) if m.role=="tool"))["result"]
+                        self.assertTrue(all(r["outcome"]["state"]=="accepted" for r in body["results"]))
+                        text = "Both return requests were accepted to their confirmed original methods. Instructions are provided by email; refund arrival is not confirmed."
+                    return AssistantMessage(role="assistant",content=text)
+                self.model.side_effect=provider
+                task=Task(id="synthetic-return-routing-boundary",user_scenario=UserScenario(instructions="Synthetic integration and lifecycle test"))
+                simulation=Orchestrator(domain="retail_plus",agent=self.agent,user=Customer(),environment=self.host,
+                    task=task,max_steps=limit,validate_communication=True).run()
+                self.assertEqual(simulation.termination_reason.value,expected)
+                self.assertEqual(simulation.messages[-1].content,"YOU ARE BEING TRANSFERRED TO A HUMAN AGENT. PLEASE HOLD ON.")
+                self.assertEqual([o.status for o in (original,other)],["return requested","return requested"])
+                self.assertEqual(len(self.writes()),3)
+                calls=[c.name for m in simulation.messages for c in (getattr(m,"tool_calls",None) or [])]
+                self.assertEqual(calls,["verify_customer","submit_changes","transfer_to_human"])

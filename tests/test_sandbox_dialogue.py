@@ -124,7 +124,7 @@ class SandboxDialogueTests(unittest.TestCase):
             self.assertEqual([row["path"] for row in backend.calls],
                              ["/v1/customers/search", "/v1/customers/p0_customer_a"])
             self.assertEqual(http_requests[1]["body"]["messages"][-1]["content"], text)
-            result = http_requests[2]["body"]["messages"][-1]
+            result = next(m for m in reversed(http_requests[2]["body"]["messages"]) if m["role"] == "tool")
             self.assertEqual(result["tool_call_id"], "loopback-verify")
             self.assertEqual(json.loads(result["content"])["result"]["email"], "alex.p0@example.test")
             self.assertEqual(state["model_calls"], 3)

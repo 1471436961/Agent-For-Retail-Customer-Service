@@ -37,3 +37,43 @@ def service_policy(operation):
     policy = deepcopy(policies[operation])
     return {"operation": operation, "confirmation": common["confirmation"],
             **policy, "sources": [*common["sources"], *policy["sources"]]}
+
+
+def business_rules():
+    """Model-facing rule data, separate from conversation/control instructions.
+
+    These facts compile the supplied current policy, not test IDs or reference
+    actions. Operation tool results retain the detailed source citations.
+    """
+    kinds = ("default_address", "order_address", "cancel", "payment", "modify_items", "return", "exchange")
+    policies = {kind: service_policy(kind) for kind in kinds}
+    return {
+        "sources": ["INTERFACE-CLARIFICATIONS.md U3-U6", "meeting_transcript_01.vtt",
+                    "meeting_transcript_02.vtt", "meeting_transcript_03.vtt",
+                    "meeting_transcript_04.vtt", "meeting_transcript_05.vtt",
+                    "workspace_export.json", "process_map_01.png", "process_map_05.png"],
+        "identity": "Verify by independently supplied email OR complete first_name, last_name, postal_code. A supplied customer ID is a claim that must match the search result before profile details. It is not authentication. Failure establishes no account existence; request accepted information or suggest website recovery. No invented lockouts or retry-count policy.",
+        "scope": "One independently verified customer per conversation, no family/delegated account switching. Only owned orders and saved payment methods. Read actual profile/order/catalog facts; do not invent dates, quantities, missing preferences or hidden record fields. Disclose only requested or necessary customer facts.",
+        "confirmation": policies["default_address"]["confirmation"],
+        "one_time_lists": "Collect and confirm the full per-order list before item modification, return or exchange. Preserve repeated item IDs as quantities, never deduplicate or append after submission. The API cannot select a specific hidden duplicate-ID line instance.",
+        "order_states": {
+            "pending": ["order_address", "cancel", "payment", "modify_items"],
+            "delivered": ["return", "exchange"],
+            "processed": "Read only; not proof of a precise shipping event or date.",
+            "pending (items modified)": "No further item modification or cancellation.",
+            "cancelled": "Read existing status/payments; do not restore or modify.",
+            "return requested": "Explain existing request; do not submit again or append.",
+            "exchange requested": "Explain existing request; do not submit again or append.",
+            "unknown": "Clarify the actual status before a related write; do not invent a shipped enum.",
+        },
+        "catalog": "After identity verification, relevant public products need not be in purchase history. Product types, all variants and available variants differ. Count actual available records for available choices. Same-product replacements must be available; preserve attributes the customer did not authorize changing. Item IDs do not encode product relationships. No guessed size scales or incompatible units.",
+        "arithmetic": "Use the general calculator for derived arithmetic, or the grounded quote's verified calculations. The model determines the formula and operands from the request and rules. Never quote mental arithmetic. Backend replacement differences accumulate float(new-old) in request order, then Python round(total,2), not per-line rounding or Decimal HALF_UP. A quote is not a write. Verify the actual receipt before claiming any effect.",
+        "settlement_choice": "If several saved eligible methods qualify, ask the customer. If only one qualifies and no different method was requested, propose that method in the complete quote; no separate permission to prepare is required. It becomes authorized only with approval of the actual change.",
+        "unsupported": ["new purchases", "quantity edits", "split shipments", "email edits",
+                        "partial cancellation", "new payment instruments", "arbitrary refunds",
+                        "notes, flags or hidden customer fields", "post-submission additions"],
+        "handoff": "Only explicit human request, escalation requested after an unsupported-limit explanation, or a real unaddressed policy gap with known facts. Anger/complexity/slowness alone is insufficient. An explicit request needs no extra reason or troubleshooting. Pause unattempted writes unless the customer explicitly requests already-confirmed work first. Use a minimal factual summary. Accepted handoff emits the exact configured notice and ends customer API automation; unknown handoff stops automation without claiming success.",
+        "operations": {kind: {key: value for key, value in policy.items()
+                               if key not in {"operation", "confirmation", "sources"}}
+                       for kind, policy in policies.items()},
+    }

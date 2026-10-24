@@ -62,7 +62,8 @@ class DirectSubmissionTests(unittest.TestCase):
                 data = json.loads(receipt.content)
                 self.assertEqual(data["state"], "accepted" if kind in {"return", "exchange"} else "completed")
                 final = self.decision(receipt, text="The requested operation has now actually been submitted.")
-                self.assertIn("Recorded operation facts", final.content)
+                self.assertEqual(final.content, "The requested operation has now actually been submitted.")
+                self.assertIn(data["customer_facts"], [json.loads(row["content"]).get("customer_facts") for row in self.state["history"] if row["role"] == "tool"])
                 self.assertIsNone(self.state["halt_reason"])
                 self.assertEqual(len(self.writes()), 1)
                 self.assertNotEqual(before, self.runtime.environment.get_db_hash())
@@ -113,7 +114,7 @@ class DirectSubmissionTests(unittest.TestCase):
         ]
         reply, self.state = self.agent.generate_next_message(receipt, self.state)
         self.assertFalse(reply.tool_calls)
-        self.assertIn("Recorded operation facts", reply.content)
+        self.assertEqual(reply.content, "Your exchange has been registered, as the receipt confirms.")
         self.assertEqual(len(self.requests), before)
         self.assertEqual(len(self.writes()), 1)
         self.assertIsNone(self.state["halt_reason"])

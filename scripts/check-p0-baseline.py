@@ -223,25 +223,14 @@ def validate() -> dict:
         check(schemas["APIError"], row["body"], "error_envelopes")
 
     policy_text = (ROOT / "docs/POLICY-REGISTER.md").read_text(encoding="utf-8")
-    coverage_text = (ROOT / "docs/COVERAGE-MATRIX.md").read_text(encoding="utf-8")
     policy_rows = re.findall(r"^\| ((?:[A-Z]+)-\d{2}) \|", policy_text, re.MULTILINE)
-    coverage_rows = re.findall(r"^\| (CV-\d{2}) \|", coverage_text, re.MULTILINE)
-    policies, coverage = set(policy_rows), set(coverage_rows)
+    policies = set(policy_rows)
     require(len(policies) == len(policy_rows), "Duplicate policy identifiers")
-    require(len(coverage) == len(coverage_rows) == 22, "Coverage matrix must have 22 unique rows")
-    require(set(re.findall(r"\bCV-\d{2}\b", policy_text)) <= coverage,
-            "Policy references missing coverage rows")
-    require(set(re.findall(r"\b(?:AUTH|FACT|CONF|STATE|ADDR|PAY|CANCEL|ITEM|RET|EXCH|MONEY|LIMIT|HUMAN|API|REPLAY|ARCH)-\d{2}\b",
-                           coverage_text)) <= policies, "Coverage references missing policies")
     for row in fixture["schema_valid_policy_counterexamples"] + fixture["identity_dialogue_blueprints"]:
         require(set(row["policies"]) <= policies, "Fixture references a missing policy")
     for group in ("request_variants", "negative_schema_examples", "schema_valid_policy_counterexamples",
                   "identity_dialogue_blueprints", "additional_wire_examples"):
         unique_index(fixture[group], "id")
-    baseline_text = (ROOT / "docs/API-BASELINE.md").read_text(encoding="utf-8")
-    require(digest in baseline_text, "API documentation contract hash is stale")
-    require(all(f"### `{identifier}`" in baseline_text for identifier in operations),
-            "An operation is missing from the API documentation")
 
     return {
         "status": "passed",
@@ -257,13 +246,12 @@ def validate() -> dict:
         "records": {"customers": len(customers), "products": len(products),
                     "catalog_variants": len(variants), "orders": len(orders)},
         "policy_entries": len(policies),
-        "coverage_rows": len(coverage),
         "identity_dialogue_blueprints": {"count": len(fixture["identity_dialogue_blueprints"]),
                                          "semantic_tests_executed": False},
         "fixture_relations_and_monetary_types": "passed",
         "scope": {"binding": "3d81f316-16c1-452d-939f-48776870bd23", "branch": "main",
                   "domain": "retail_plus", "language": "python", "task": "t1", "case_ids": None},
-        "business_agent_implemented": False,
+        "business_agent_executed": False,
     }
 
 

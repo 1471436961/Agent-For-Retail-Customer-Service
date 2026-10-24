@@ -322,8 +322,10 @@ def record_reply(state, reply, actions, *, live=False):
     if state.handoff == "accepted" and reply.content != TRANSFER_NOTICE:
         raise ProtocolError("Accepted handoff requires exact notice")
     if has_text and not calls and state.receipt_facts_to_display and state.handoff not in {"accepted", "unknown"}:
-        if not reply.content.endswith(receipt_text(state.receipt_facts_to_display)):
-            raise ProtocolError("Actual outcome facts must be displayed")
+        # Actual receipts stay in history. Their explanation is model-owned;
+        # a mandatory JSON footer cannot prove a truthful or complete reply.
+        # Keep the fallback facts until a genuine text response, so a provider
+        # failure before that response can still report the actual write.
         state.receipt_facts_to_display = []
     store(state, reply)
 

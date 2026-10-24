@@ -1,39 +1,22 @@
-# 工程结构与开发方式
+# 系统职责
 
-## Python
+业务规则、模型决策、工具执行和会话状态各自负责不同问题。
 
-```text
-agent/
-  agent.py                  # 平台工厂入口
-  tools.py                  # 平台工具发现入口
-  agent.json                # 协议、语言、场景
-  support_agent/            # 可安装的本地 Python package
-    application.py          # 决定下一轮回答或工具调用
-    state.py                # 每个会话独立的 JSON 状态
-    domain/customer.py      # 不依赖运行环境的业务规则
-    adapters/customer_api.py    # 业务 API 传输与错误处理
-    adapters/customer_tools.py  # 工具声明与注册
-tests/test_customer.py      # 无网络、无模型的单元测试
-pyproject.toml             # 本地 package 元数据
-```
+| 部分 | 职责 | 代码 |
+|---|---|---|
+| 业务规则 | 从有效材料提取政策，保留出处；区分业务要求与工程选择 | `support_agent/domain/policy.py`、`docs/POLICY-REGISTER.md` |
+| 模型决策 | 理解所有请求、条件、改口和确认，选择工具并填写参数 | `support_agent/prompts.py`、`gateway.py` |
+| 通用计算 | 加减乘除及舍入；不推断业务含义或用户偏好 | `support_agent/domain/money.py` |
+| 工具与 API | 读取真实数据、核对归属及请求结构、执行明确操作、验证实际回执 | `support_agent/adapters/` |
+| 会话状态 | 关联调用与结果，保留方案版本和真实执行进度，为下一次模型决策提供状态 | `support_agent/state.py`、`workflow.py` |
+| 平台入口 | 取得注入 context，处理用户消息／工具结果，返回下一条消息和状态 | `agent.py`、`support_agent/application.py` |
 
-## TypeScript
+用户语言由模型理解。代码不使用姓名句式、同意关键词或题号路由来代替模型决策。工具对结构化参数、真实记录和接口契约的校验不能充当用户授权。
 
-`agent.ts` 和 `tools.ts` 是同样的薄入口。`agent/support-agent/` 按 `application.ts`、`state.ts`、`domain/customer.ts`、`adapters/customer-api.ts` 和 `adapters/customer-tools.ts` 划分模块；`contract.ts` 提供协议类型。项目根目录的 `package.json` 提供 `npm test`，`tests/customer.test.ts` 验证完整的用户消息 → 工具调用 → API 结果 → 回答流程。
+会话围绕真实事件推进：独立核验身份 → 读取／澄清 → 准备并说明完整方案 → 模型理解客户回复 → 执行已确认的操作 → 核查并说明真实结果。只读无需客户许可；客户更改方案或未满足条件时，应重新澄清相关内容。状态机记录所处阶段，不凭“收到一条用户消息”判定同意，也不凭一次成功写入判定所有任务完成。
 
-## 一个功能应该如何增加
+通用计算工具只执行模型指定的算术。业务报价和写入适配器仍需复核金额、原成交价、商品次数及结算目的地，避免错误参数或失效报价造成实际写入。后台特定的浮点／舍入契约不应变成通用计算工具唯一支持的场景。
 
-1. 从业务材料提取规则，先在 `domain/` 增加纯函数和本地测试。
-2. 在 `adapters/` 添加业务 API 适配器，检查状态码；在工具模块声明只读/写入属性。
-3. 在 `application` 中连接对话逻辑。真正的会话数据保存在 state 中，不放在模块全局变量；根据调用 ID 对应工具结果。
-4. 写入操作前实现业务规则与用户确认；不要盲目重试会造成重复退款等副作用的操作。
-5. 运行本地测试，然后提交整个 `agent/`。先做 t1 接入，再做公开练习或所选正式案例。查看实际结果与期望结果的差异。
+异步回执必须沿服务实际返回的状态资源查询。未知写入不能重复提交；当前记录与已确认请求匹配时，可说明观察到的业务事实。申请受理不等于退款到账或商品发货。
 
-## 依赖与运行边界
-
-- Python 需要 3.12+；纯业务规则测试只使用标准库。`tau2` 由远程环境提供；本地安装这个 package 不会自动安装评测框架。
-- TypeScript 需要 Node 24，使用原生类型擦除和显式 `.ts` 相对导入。这里的多模块目录是真正运行的本地模块，不依赖构建别名或 npm workspace 链接。
-- `pyproject.toml` / `package.json` 是开发配置，不是授权远程安装依赖。远程不会执行 `pip install`、`npm install` 或项目脚本。不得上传 `node_modules` 或虚拟环境。
-- 仅递归提交 `agent/`，最多 128 文件、单文件 256 KiB、合计 2 MiB。放在它之外的共享代码不会运行；应将其移入该目录。
-- 示例无模型调用，也没有真实客户凭证。本地测试使用合成数据；真正的 t1 通过环境 API 查询，而不是返回写死的客户信息。
-- README 和本文件随所选中文/英文版本切换。代码标识符、测试断言及业务 API 不随阅读语言变化。
+开发使用项目 `.venv` 中的真实 tau2 SDK；运行包不读取本机材料路径、安装依赖或携带模型凭证。离线测试、真实模型测试和平台评测是不同证据，不能互相冒充。

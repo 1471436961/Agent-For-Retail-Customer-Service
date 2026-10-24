@@ -216,7 +216,7 @@ class TaskCompletionTests(unittest.TestCase):
         final = self.decision(second, text="Both requested address changes completed, with separate actual receipts.")
         self.assertIsNone(self.state["halt_reason"])
         self.assertEqual(len(self.writes()), 2)
-        self.assertIn("Recorded operation facts", final.content)
+        self.assertEqual(final.content, "Both requested address changes completed, with separate actual receipts.")
         _, native, _ = reference_kit()
         apply_native_reference(native.environment.tools, "default_address", self.case["customer_id"], self.params)
         apply_native_reference(native.environment.tools, "order_address", self.case["customer_id"], order_params)

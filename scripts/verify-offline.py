@@ -18,14 +18,16 @@ spec.loader.exec_module(audit)
 suite = unittest.defaultTestLoader.discover(str(ROOT / "tests"))
 result = unittest.TextTestRunner(verbosity=2).run(suite)
 package = audit.audit(ROOT / "agent")
-report = {"stage": "P7", "generated_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+report = {"generated_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
           "command": ".\\.venv\\Scripts\\python.exe scripts/verify-offline.py", "python": sys.executable,
           "tests": {"executed": result.testsRun, "failed": len(result.failures), "errors": len(result.errors), "skipped": len(result.skipped), "passed": result.testsRun-len(result.failures)-len(result.errors)-len(result.skipped)},
-          "package": package, "scope": audit.SCOPE, "public_requirements_mapped": 134,
+          "package": package, "scope": audit.SCOPE,
           "real_provider_called": False, "public_business_cases_executed": 0,
           "scope_kind": "installation snapshot; not a live platform binding",
           "online_status": "This offline command does not launch or verify online evaluations; inspect actual platform reports separately.",
           "semantic_understanding": "not verified; provider decisions are mocked", "platform_replay": "not verified; all-call replay tested offline",
           "status": "passed" if result.wasSuccessful() and package["passed"] else "failed"}
-(ROOT / "docs/P7-VALIDATION.json").write_text(json.dumps(report, ensure_ascii=False, indent=2)+"\n", encoding="utf-8")
+destination = ROOT / "evaluation-results/offline/report.json"
+destination.parent.mkdir(parents=True, exist_ok=True)
+destination.write_text(json.dumps(report, ensure_ascii=False, indent=2)+"\n", encoding="utf-8")
 sys.exit(0 if report["status"] == "passed" else 1)

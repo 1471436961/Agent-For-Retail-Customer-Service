@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SCOPE = {"binding": "3d81f316-16c1-452d-939f-48776870bd23", "branch": "main",
          "domain": "retail_plus", "language": "python", "task": "t2",
-         "case_selection_source": "platform_binding", "expected_case_count": 1}
+         "case_selection_source": "platform_binding"}
 
 
 def audit(directory):

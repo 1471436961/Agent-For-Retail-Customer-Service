@@ -11,6 +11,8 @@ from tau2.data_model.message import MultiToolMessage, ToolMessage
 from support_agent.state import decode, has_prior_recap_turn
 from support_agent.adapters.change_tools import ACTION_NAMES, EXECUTE_ACTIONS, DIRECT_ACTION
 from support_agent.config import PREFERRED_MODEL
+from support_agent.domain.money import ArithmeticOperation
+from support_agent.workflow import prepared_kinds_with_later_input
 from support_agent.domain.presentation import proposal_view
 
 
@@ -51,6 +53,15 @@ class GatewayAdapter:
                 "Use null ONLY when no customer ID was supplied. Never discard a supplied ID.")))})
             if action.name == "verify_customer" else action for action in self.actions
             if action.name != "lookup_customer")
+        # Earlier histories still validate against the original action schema.
+        # New decisions see a general arithmetic interface, not retail-specific
+        # new/old-price pair conventions or legacy operation aliases.
+        self.live_actions = tuple(action.model_copy(update={"params": create_model(
+            "ArithmeticParameters", __base__=action.params,
+            operation=(ArithmeticOperation, Field(..., description=
+                "General arithmetic operation: add, subtract, multiply, divide or round. "
+                "The model supplies the operands; this tool does not choose a business formula.")))})
+            if action.name == "calculate" else action for action in self.live_actions)
         if any(action.info.get("tool_type") not in {"read", "write", "generic"} for action in self.actions):
             raise ValueError("Unsupported action type")
         self.model, self.options = self._select_configuration()
@@ -92,9 +103,7 @@ class GatewayAdapter:
             # complete disclosure or consent: the model judges both meanings.
             # Preparation remains
             # available when the customer changes their request.
-            ready_kinds = {proposal["facts"]["kind"] for identifier, proposal in state.proposals.items()
-                           if proposal["state"] == "prepared" and identifier in state.reviewed
-                           and state.user_turn > state.reviewed[identifier]}
+            ready_kinds = prepared_kinds_with_later_input(state)
             return tuple(action for action in self.live_actions
                          if (action.name not in EXECUTE_ACTIONS or EXECUTE_ACTIONS[action.name] in ready_kinds)
                          and (action.name != DIRECT_ACTION or has_prior_recap_turn(state)))

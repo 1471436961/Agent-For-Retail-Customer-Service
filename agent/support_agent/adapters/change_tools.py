@@ -71,14 +71,19 @@ class ChangeTools(CustomerTools):
             return compare(self.get_product_variants(product_id), filters, sort_by, descending, numeric_unit)
 
     @is_tool(ToolType.READ)
-    def calculate(self, operation: Literal["sum", "difference", "price_difference", "round"], values: list[float]) -> dict:
-        """Calculate finite values with an auditable input/output trace.
+    def calculate(self, operation: Literal["add", "subtract", "multiply", "divide", "round", "sum", "difference", "price_difference"],
+                  values: list[float], decimal_places: int | None = None) -> dict:
+        """Perform general addition, subtraction, multiplication, division or rounding.
 
-        difference takes [left,right]; price_difference takes [new,old,...],
-        accumulates float differences in order then Python round(total,2).
-        Never evaluate expressions or treat malformed money as zero.
+        The model determines operands from the user's request and business rules.
+        add sums values; subtract and divide apply values left to right (at least
+        two operands); multiply multiplies all values. No implicit currency
+        rounding. Optional decimal_places rounds the final result; round takes
+        one value and defaults to two decimal places. Python float/round applies.
+        Returns actual operands and result. Rejects non-finite numbers and zero
+        divisors; never invents units or evaluates code. No business API calls.
         """
-        return calculate_values(operation, values)
+        return calculate_values(operation, values, decimal_places)
 
     @is_tool(ToolType.READ)
     def get_service_policy(self, operation: Literal["default_address", "order_address", "cancel", "payment", "modify_items", "return", "exchange"]) -> dict:

@@ -9,6 +9,8 @@ from tau2.data_model.message import AssistantMessage, SystemMessage
 from support_agent.adapters.conversation_api import TRANSFER_NOTICE
 from support_agent.domain.gateway_failure import diagnose_gateway_failure
 from support_agent.domain.reply import REPLY_INSTRUCTIONS, render_model_reply
+from support_agent.workflow import checkpoint
+from support_agent.domain.policy import business_rules
 import json
 
 
@@ -45,6 +47,8 @@ class RetailAgent:
             return self._stop(current, "model_call_limit")
         try:
             prompt = SERVICE_GOALS + (SYSTEM_PROMPT if current.verified_customer_id else IDENTITY_PROMPT)
+            if current.verified_customer_id:
+                prompt += "\nApplicable business rules from the supplied materials: " + json.dumps(business_rules(), ensure_ascii=False)
             if current.proposals:
                 progress = [{"proposal_id": identifier, "kind": p["facts"]["kind"],
                              "order_id": p["facts"]["order_id"], "state": p["state"],
@@ -54,16 +58,8 @@ class RetailAgent:
                     {"user_turn": current.user_turn, "changes": progress})
             if current.submissions:
                 prompt += "\nActual submitted-change outcomes: " + json.dumps(list(current.submissions.values()))
-            if current.review_to_display:
-                prompt += ("\nA complete verified proposal is ready to display. Answer the customer's "
-                           "outstanding questions using the policy and actual tool results, and explain the "
-                           "complete proposal now, using its actual quoted amounts and settlement. "
-                           "You own the customer-facing recap: give it ONCE and ask ONE submission "
-                           "confirmation covering the complete change. No extra recap or question is appended. "
-                           "Do not call review_change merely to fetch the same "
-                           "proposal again. Do not execute before it has been displayed and the customer "
-                           "subsequently clearly approves it. If facts need correction, invalidate or "
-                           "prepare the corrected proposal instead. Never say preparation submitted it.")
+            if current.verified_customer_id:
+                prompt += "\nCurrent workflow checkpoint (evidence, not customer intent): " + json.dumps(checkpoint(current))
             actions = self.gateway.actions_for(current)
             messages = [SystemMessage(role="system", content=prompt + REPLY_INSTRUCTIONS, timestamp=None),
                         *self.gateway.project_history(current.history)]
@@ -93,8 +89,6 @@ class RetailAgent:
                         text = render_model_reply(reply.content)
                     except ValueError as error:
                         raise ProtocolError(str(error)) from None
-                    if current.receipt_facts_to_display:
-                        text += receipt_text(current.receipt_facts_to_display)
                     reply = reply.model_copy(update={"content": text})
                 candidate = current.model_copy(deep=True)
                 record_reply(candidate, reply, {action.name: action for action in actions}, live=True)

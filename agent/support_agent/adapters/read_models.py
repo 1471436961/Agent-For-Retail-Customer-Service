@@ -6,7 +6,7 @@ Finite monetary values add the documented U3/U6 robustness requirement.
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 NonEmpty = Annotated[str, Field(min_length=1)]
 
@@ -74,6 +74,29 @@ class CatalogItem(Record):
     options: dict[str, str]
     available: bool
     price: float
+
+
+class NumericVariantFilter(Record):
+    option: NonEmpty
+    operator: Literal["lt", "lte", "eq", "gte", "gt"]
+    value: float
+    unit: NonEmpty
+
+
+class VariantQuery(Record):
+    product_id: NonEmpty
+    filters: dict[str, str] = Field(default_factory=dict)
+    numeric_filters: list[NumericVariantFilter] = Field(default_factory=list)
+    sort_by: NonEmpty = "price"
+    descending: bool = False
+    numeric_unit: str = ""
+    limit: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def require_numeric_sort_unit(self):
+        if self.sort_by != "price" and not self.numeric_unit:
+            raise ValueError("Sorting an option requires its explicit unit")
+        return self
 
 
 class Product(Record):

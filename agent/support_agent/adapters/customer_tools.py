@@ -13,11 +13,14 @@ from support_agent.domain.identity import (
 )
 from support_agent.domain.policy import service_policy
 from support_agent.domain.money import calculate_values
+from support_agent.domain.catalog import query_variants
+from support_agent.adapters.read_models import VariantQuery
+from pydantic import ValidationError
 
 READ_ACTION_NAMES = (
     "verify_customer", "lookup_customer", "get_customer_summary", "list_customer_orders",
     "get_owned_order", "list_products", "get_product_variants", "get_catalog_item",
-    "get_catalog_summary", "read_products", "read_context",
+    "get_catalog_summary", "read_products", "read_context", "query_product_variants",
 )
 VERIFICATION_ACTION_NAMES = frozenset({"verify_customer", "lookup_customer"})
 
@@ -348,6 +351,45 @@ class CustomerTools(ClientAPIToolKitBase):
         if not identifiers:
             raise ReadError("product_ids_or_names_required")
         return list(dict.fromkeys(identifiers))
+
+    @is_tool(ToolType.READ)
+    def query_product_variants(self, queries: list[VariantQuery], refresh: bool = False) -> dict:
+        """Batch exact filtering, numeric comparison and ranking of actual variants.
+
+        The model chooses criteria from customer requirements and unchanged
+        options. product_id must be an observed catalog/order ID. filters uses
+        exact option vocabulary. numeric_filters compares an option with an
+        explicit value and unit; no unit conversion or guessed size ordering.
+        Sort price numerically, or another option using numeric_unit. Use
+        descending=true and limit=1 for the highest priced matching variant;
+        omit limit when the customer requests all choices and prices.
+        Results distinguish invalid criteria, no matching configuration and
+        matching out-of-stock configurations. Preserve all requested choices.
+        Reuses genuine observed catalogs unless refresh=true; missing catalogs
+        are read once per product. Quotes/writes still check their own facts.
+        No language parsing, customer preference inference or business write.
+        """
+        with self._lock:
+            self._customer_id()
+            if not isinstance(queries, list) or not queries or type(refresh) is not bool:
+                raise ReadError("invalid_variant_query")
+            try:
+                selected = [VariantQuery.model_validate(row, strict=True).model_dump() for row in queries]
+            except ValidationError:
+                raise ReadError("invalid_variant_query") from None
+            products, results = {}, []
+            for query in selected:
+                identifier = resource_id(query["product_id"])
+                if identifier not in products:
+                    observed = self._observed_products.get(identifier)
+                    if refresh or observed is None:
+                        products[identifier] = (self.get_product_variants(identifier), "fresh_read")
+                    else:
+                        products[identifier] = (deepcopy(observed), "observed_catalog")
+                product, source = products[identifier]
+                results.append({**query_variants(product, query), "source": source})
+            return {"queries": results,
+                    "notice": "Exact query results from actual catalog records; selection and consent remain model-owned. Writes independently recheck current facts."}
 
     @is_tool(ToolType.READ)
     def list_products(self) -> dict:

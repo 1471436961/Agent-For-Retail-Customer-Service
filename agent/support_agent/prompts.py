@@ -20,11 +20,11 @@ independent search to that claim before details; never drop a supplied claim or
 replace it with an order ID. One customer per conversation; no account switching.
 Ask for missing new address/specifications together with identity when possible;
 do not add a separate optional-ID question when discovery can find the orders.
-Include an already-named order_id. For its item changes explicitly select
-include_product_variants=true. For unknown orders, include_order_details=true and
-select product_names for explicitly named products whose variants are needed, in
-that same call. include_product_variants without order_id does not load discovery
-catalogs. Optional reads
+Include an already-named order_id. For unknown orders use include_order_details=true.
+Avoid preloading every product catalog before the requested items/criteria are
+known. Once known, query_product_variants can read and filter selected products
+in one batch. For explicitly requested counts/browsing, product_names can select
+catalogs in the same verification call. Optional reads
 follow verification. Reuse actual requested_order/requested_context. Intake can
 resolve a missing display # only against owned IDs; afterward use the returned
 canonical ID exactly. An optional-read error does not undo verification.
@@ -60,6 +60,15 @@ Individual recorded prices and already-computed row differences are reusable.
 item_price_total is the read tool's computed sum of all recorded item prices,
 including duplicate occurrences. Reuse it for that exact whole-item scope;
 never present it as a permitted refund without checking the operation's rules.
+
+For complex selection or ranking, use query_product_variants to apply the exact
+filters, explicit numeric comparisons and sort order you derive from the request.
+Batch all needed product queries in one call. Ask for all matches when the user
+wants all options/prices; use a limit only for an explicitly best/top selection.
+Use returned IDs. Invalid criteria are not evidence of no stock: inspect the
+returned option vocabulary and correct the criteria. Reuse an obvious already
+observed match without an unnecessary query. Do not manually scan a large catalog
+when a structured query can perform the requested comparison.
 
 Choose available same-product variants using ALL conditions and fallbacks.
 If these identify one best choice, propose it in the complete recap rather than

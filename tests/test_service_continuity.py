@@ -72,6 +72,34 @@ class ServiceContinuityTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             PlanRequest.model_validate({"kind":"order_address","parameters":wrong})
 
+    def test_variant_query_is_model_visible_and_cannot_bypass_fresh_write_checks(self):
+        received = self.verify("exchange")
+        order = self.kit._observed_orders[self.case["order_id"]]
+        queries = []
+        targets = []
+        for row in self.params["replacements"]:
+            item = next(i for i in order["items"] if i["item_id"]==row["existing_item_id"])
+            product = self.runtime.environment.tools.db.products[item["product_id"]]
+            target = product.variants[row["replacement_item_id"]]
+            targets.append(target)
+            queries.append({"product_id":product.product_id,"filters":dict(target.options)})
+        before = len(self.requests)
+        filtered = self.result(self.decision(received,"query_product_variants",{"queries":queries}))
+        self.assertEqual(len(self.requests),before)  # Actual prior catalogs are reused.
+        matches = json.loads(filtered.content)["queries"]
+        self.assertTrue(all(row["state"]=="complete" for row in matches))
+        for result,requested in zip(matches,self.params["replacements"]):
+            self.assertIn(requested["replacement_item_id"],[item["item_id"] for item in result["candidates"]])
+        quoted = self.result(self.decision(filtered,"prepare_change",{"kind":"exchange","parameters":self.params}))
+        facts = json.loads(quoted.content)["facts"]
+        self.decision(quoted,text="The complete exchange is "+json.dumps(facts["body"])+" with calculations "+json.dumps(facts["calculations"])+". Do you approve?")
+        targets[0].available = False
+        call = self.decision(UserMessage(role="user",content="I approve that complete exchange and settlement. Submit it."),
+                             "request_exchange",self.params)
+        outcome = json.loads(self.result(call).content)
+        self.assertEqual(outcome["state"],"failed")
+        self.assertEqual(self.writes(),[])
+
     def test_specific_address_schema_and_resume_after_two_invalid_drafts(self):
         received = self.verify("order_address")
         actual = next(action for action in self.agent.gateway.live_actions if action.name == "update_order_address")

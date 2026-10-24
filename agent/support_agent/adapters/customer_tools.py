@@ -16,7 +16,7 @@ from support_agent.domain.policy import service_policy
 READ_ACTION_NAMES = (
     "verify_customer", "lookup_customer", "get_customer_summary", "list_customer_orders",
     "get_owned_order", "list_products", "get_product_variants", "get_catalog_item",
-    "get_catalog_summary",
+    "get_catalog_summary", "read_products",
 )
 VERIFICATION_ACTION_NAMES = frozenset({"verify_customer", "lookup_customer"})
 
@@ -121,7 +121,8 @@ class CustomerTools(ClientAPIToolKitBase):
                                           "http_status": error.http_status}}
             if order_id:
                 try:
-                    profile["requested_order"] = self.get_owned_order(order_id, include_product_variants)
+                    profile["requested_order"] = self._read_owned_order(
+                        resource_id(order_id), profile, include_product_variants)
                 except ReadError as error:
                     profile["requested_order_error"] = {"code": error.code, "operation": error.operation,
                                                         "http_status": error.http_status}
@@ -198,23 +199,49 @@ class CustomerTools(ClientAPIToolKitBase):
         order_id = resource_id(order_id)
         with self._lock:
             profile = self._profile()
-            if order_id not in profile["order_ids"]:
-                raise ReadError("order_access_denied")
-            order = read_order(self.client_api, order_id)
-            if order["customer_id"] != self._customer_id():
-                raise ReadError("order_access_denied")
-            self._observed_orders[order_id] = deepcopy(order)
-            if include_product_variants:
-                products = {}
-                for item in order["items"]:
-                    identifier = item["product_id"]
-                    if identifier not in products:
-                        products[identifier] = self.get_product_variants(identifier)
-                kinds = ("return", "exchange") if order["status"] == "delivered" else (
-                    "order_address", "cancel", "payment", "modify_items") if order["status"] == "pending" else ()
-                return {**order, "product_variants": list(products.values()),
-                        "change_policies": {kind: service_policy(kind) for kind in kinds}}
-            return order
+            return self._read_owned_order(order_id, profile, include_product_variants)
+
+    def _read_owned_order(self, order_id, profile, include_product_variants=False):
+        """Reuse the profile read in THIS operation, never a cross-turn cache."""
+        customer_id = self._customer_id()
+        if profile["customer_id"] != customer_id or order_id not in profile["order_ids"]:
+            raise ReadError("order_access_denied")
+        order = read_order(self.client_api, order_id)
+        if order["customer_id"] != customer_id:
+            raise ReadError("order_access_denied")
+        self._observed_orders[order_id] = deepcopy(order)
+        kinds = ("return", "exchange") if order["status"] == "delivered" else (
+            "order_address", "cancel", "payment", "modify_items") if order["status"] == "pending" else ()
+        result = deepcopy(order)
+        if include_product_variants:
+            # Historical optional batch; live decisions select product IDs.
+            products = {}
+            for item in order["items"]:
+                identifier = item["product_id"]
+                if identifier not in products:
+                    products[identifier] = self.get_product_variants(identifier)
+            result["product_variants"] = list(products.values())
+            result["change_policies"] = {kind: service_policy(kind) for kind in kinds}
+        return result
+
+    @is_tool(ToolType.READ)
+    def read_products(self, product_ids: list[str]) -> dict:
+        """Read explicitly selected products' variants, prices and counts.
+
+        Select actual product IDs from orders or list_products. Only these
+        catalogs are fetched in one host action; unrelated order products are
+        not loaded. Every record must succeed, with no falsely complete partial
+        result. This is read-only and needs no customer permission.
+        """
+        if not isinstance(product_ids, list) or not product_ids:
+            raise ReadError("product_ids_required")
+        identifiers = [resource_id(identifier) for identifier in product_ids]
+        with self._lock:
+            products = {}
+            for identifier in identifiers:
+                if identifier not in products:
+                    products[identifier] = self.get_product_variants(identifier)
+            return {"products": list(products.values())}
 
     @is_tool(ToolType.READ)
     def list_products(self) -> dict:

@@ -125,6 +125,7 @@ class OrderStatusAliasTests(unittest.TestCase):
             resource_root=ROOT / "agent", model_configs=[{"model": "offline-contract-model"}])
         with activate_agent_context(context):
             agent = create_agent()
+            agent.gateway.live_actions = agent.gateway.compatibility_actions
         host = Environment("retail_plus", policy="", tools=kit)
         writes = lambda: [request for request in requests if request["method"] != "GET"
                           and request["path"] != "/v1/customers/search"]

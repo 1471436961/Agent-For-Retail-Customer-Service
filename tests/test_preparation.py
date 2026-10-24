@@ -104,6 +104,7 @@ class PreparationTests(unittest.TestCase):
         for method in ("p0_paypal", "new_gift"):
             if method == "new_gift":
                 self.backend.records["customers"][0]["payment_methods"].append({"id": method, "source": "gift_card", "balance": 0.0})
+                self.kit.get_customer_summary()
             with self.assertRaisesRegex(ReadError, "ineligible_refund_destination"):
                 self.kit.prepare_change("return", {**params, "refund_payment_method_id": method})
 

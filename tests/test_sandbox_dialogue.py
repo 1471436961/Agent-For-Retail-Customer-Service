@@ -47,7 +47,7 @@ class SandboxDialogueTests(unittest.TestCase):
                 "id": "loopback-verify", "type": "function", "function": {
                     "name": "verify_customer", "arguments": json.dumps({
                         "email": "alex.p0@example.test", "claimed_customer_id": "p0_customer_a"})}}]},
-            {"role": "assistant", "content": "email: alex.p0@example.test"},
+            {"role": "assistant", "content": "email: alex.p0@example.test ###STOP###"},
         ]
 
         class Handler(BaseHTTPRequestHandler):
@@ -115,6 +115,8 @@ class SandboxDialogueTests(unittest.TestCase):
                     ToolMessage(role="tool", id=call.id, content=json.dumps(facts))]), state)
                 self.assertIsNone(state["halt_reason"])
                 self.assertIn("alex.p0@example.test", reply.content)
+                self.assertTrue(agent.is_stop(reply))
+                self.assertNotIn("###STOP###", reply.content)
 
             self.assertEqual(len(http_requests), 3)
             self.assertEqual(len(broker_requests), 3)

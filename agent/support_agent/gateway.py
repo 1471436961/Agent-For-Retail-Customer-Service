@@ -8,11 +8,10 @@ import re
 from pydantic import Field, create_model
 
 from tau2.data_model.message import MultiToolMessage, ToolMessage
-from support_agent.state import decode, has_prior_recap_turn
+from support_agent.state import decode, has_prior_assistant_turn
 from support_agent.adapters.change_tools import ACTION_NAMES, EXECUTE_ACTIONS, DIRECT_ACTION
 from support_agent.config import PREFERRED_MODEL
 from support_agent.domain.money import ArithmeticOperation
-from support_agent.workflow import prepared_kinds_with_later_input
 from support_agent.domain.presentation import proposal_view
 
 
@@ -62,6 +61,25 @@ class GatewayAdapter:
                 "General arithmetic operation: add, subtract, multiply, divide or round. "
                 "The model supplies the operands; this tool does not choose a business formula.")))})
             if action.name == "calculate" else action for action in self.live_actions)
+        # Old callable operations remain available to historical replay and
+        # compatibility tests. New decisions have one business write channel.
+        self.compatibility_actions = self.live_actions
+        live_names = {"verify_customer", "get_customer_summary", "list_customer_orders",
+                      "get_owned_order", "list_products", "read_products", "get_product_variants",
+                      "get_catalog_summary", "calculate", "get_service_policy", "prepare_change",
+                      "submit_change", "invalidate_change", "inspect_change_result",
+                      "get_service_status", "transfer_to_human"}
+        self.live_actions = tuple(action for action in self.live_actions if action.name in live_names)
+        descriptions = {
+            "verify_customer": "Independently verify by email OR full first/last name and postal code; match a supplied customer ID before profile details. Optionally read the explicitly named owned order. No catalogs are loaded. Use null claimed_customer_id only when none was supplied. Profile failure preserves verification, recover via get_customer_summary.",
+            "get_owned_order": "Read one exact owned order ID, checking membership and owner. Preserve #. Returns items, status and payments; no unrelated catalogs. Select product IDs from these records for read_products. Apply the supplied business rules.",
+        }
+        self.live_actions = tuple(action.model_copy(update={
+            "params": create_model("Focused" + action.name, **{
+                key: (field.annotation, deepcopy(field)) for key, field in action.params.model_fields.items()
+                if key != "include_product_variants"}),
+            "short_desc": descriptions[action.name], "long_desc": "",
+        }) if action.name in descriptions else action for action in self.live_actions)
         if any(action.info.get("tool_type") not in {"read", "write", "generic"} for action in self.actions):
             raise ValueError("Unsupported action type")
         self.model, self.options = self._select_configuration()
@@ -103,10 +121,12 @@ class GatewayAdapter:
             # complete disclosure or consent: the model judges both meanings.
             # Preparation remains
             # available when the customer changes their request.
-            ready_kinds = prepared_kinds_with_later_input(state)
+            ready_kinds = {p["facts"]["kind"] for key, p in state.proposals.items()
+                           if p["state"] == "prepared" and key in state.quote_response_turns
+                           and state.user_turn > state.quote_response_turns[key]}
             return tuple(action for action in self.live_actions
                          if (action.name not in EXECUTE_ACTIONS or EXECUTE_ACTIONS[action.name] in ready_kinds)
-                         and (action.name != DIRECT_ACTION or has_prior_recap_turn(state)))
+                         and (action.name != DIRECT_ACTION or has_prior_assistant_turn(state)))
         return tuple(action for action in self.live_actions if action.name in {
             "verify_customer", "transfer_to_human",
         })

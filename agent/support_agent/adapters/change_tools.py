@@ -13,7 +13,7 @@ from support_agent.domain.plans import order_requests
 from support_agent.domain.receipts import customer_facts
 from support_agent.adapters.change_parameters import ChangeParameters, PlanRequest
 from support_agent.domain.policy import service_policy
-from support_agent.domain.observations import ObservedFacts
+from support_agent.domain.observations import ObservedFacts, CurrentFacts
 
 PREPARATION_ACTION_NAMES = ("compare_variants", "calculate", "get_service_policy", "prepare_change")
 REVIEW_ACTION_NAMES = ("review_change", "invalidate_change")
@@ -101,12 +101,13 @@ class ChangeTools(CustomerTools):
 
     @is_tool(ToolType.READ)
     def prepare_change(self, kind: Literal["default_address", "order_address", "cancel", "payment", "modify_items", "return", "exchange"], parameters: ChangeParameters) -> dict:
-        """Get the accurate full quote now, without performing any write.
+        """Quote the selected change from actual observed records, without writing.
 
         This is a READ. When choices and settlement details are known, call it
         immediately; never ask permission to prepare, calculate or show a quote.
         Use its verified prices, totals and difference in ONE complete recap,
-        then ask for submission approval. Do not offer to prepare it after an
+        then ask for submission approval. To refresh a record, read it explicitly;
+        quotes reuse observed facts, while submission independently revalidates them. Do not offer to prepare it after an
         initial confirmation. Answer any real clarification without restarting
         an unchanged quote or inserting a separate list-completeness approval.
 
@@ -127,7 +128,7 @@ class ChangeTools(CustomerTools):
         a read-only draft: no approval or list-completeness affirmation is needed
         to prepare it. Its successful result is ready for the Agent to explain
         and display directly; a second review_change read is not required.
-        Then obtain confirmation of the complete list and exact change before execute. Identity,
+        Then obtain confirmation of the complete list and exact change before submit_change. Identity,
         ownership, status, catalog, quantities and finances are checked here.
         A changed quote supersedes an unattempted proposal for the same target.
         Reading the same unchanged quote preserves its ID and approval context.
@@ -137,7 +138,7 @@ class ChangeTools(CustomerTools):
             target = parameters.get("order_id") if kind != "default_address" else None
             if any(p["state"] in {"attempted", "pending", "unknown"} and p["facts"]["order_id"] == target for p in self._proposals.values()):
                 raise ReadError("unresolved_write_requires_inspection_no_new_write")
-            facts = prepare(self, kind, deepcopy(parameters))
+            facts = prepare(ObservedFacts(self, load_missing=True), kind, deepcopy(parameters))
             return deepcopy(self._new_proposal(facts, parameters))
 
     def _new_proposal(self, facts, parameters):
@@ -149,7 +150,8 @@ class ChangeTools(CustomerTools):
                 return previous
         identifier = f"proposal-{len(self._proposals) + 1}"
         for previous in self._proposals.values():
-            if previous["state"] == "prepared" and previous["facts"]["order_id"] == facts["order_id"]:
+            if (previous["state"] == "prepared" and previous["facts"]["order_id"] == facts["order_id"]
+                    and previous["facts"]["kind"] == facts["kind"]):
                 previous["state"] = "superseded"
         proposal = {"proposal_id": identifier, "state": "prepared", "facts": facts,
                     "parameters": deepcopy(parameters)}
@@ -247,7 +249,7 @@ class ChangeTools(CustomerTools):
                 return deepcopy(proposal.get("outcome", {"state": proposal["state"]}))
             if proposal["state"] != "prepared":
                 raise ReadError("proposal_not_prepared")
-            current = prepare(self, kind, proposal["parameters"])
+            current = prepare(CurrentFacts(self), kind, proposal["parameters"])
             if execution_evidence(current) != execution_evidence(proposal["facts"]):
                 proposal["state"] = "stale"
                 raise ReadError("facts_changed_prepare_and_confirm_again")

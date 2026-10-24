@@ -1,4 +1,16 @@
-"""Native tau2 assistant text; no additional model reply protocol."""
+"""Native assistant text with an optional completion signal; no required envelope."""
+
+# An optional model control signal, never interpreted from customer language.
+# The visible reply stays ordinary text; is_stop consumes only local metadata.
+STOP_MARKER = "###STOP###"
+
+
+def response_content(content):
+    text = render_model_reply(content)
+    complete = text.rstrip().endswith(STOP_MARKER)
+    if complete:
+        text = render_model_reply(text.rstrip()[:-len(STOP_MARKER)].rstrip())
+    return text, complete
 
 
 def render_model_reply(content):
@@ -20,4 +32,11 @@ before an email answer. Explain failed operations truthfully; do not claim
 completion or expose unrelated private fields. Clarifications and policy
 explanations are normal text too. For actions use normal tau2 tool_calls with
 object arguments and null content; wait for actual results before answering.
+When ALL stated goals have been resolved or their real supported limits have
+been explained, with no outstanding question, approval or uncertain write,
+you may append ###STOP### to the end of the final natural-language response.
+This is an optional control marker, not a customer phrase or proof of success.
+Never append it while requesting information/approval or leaving work pending.
+Completing an exchange-request goal means its actual registration, not later
+refund arrival or shipping. A successful write alone does not resolve other goals.
 """

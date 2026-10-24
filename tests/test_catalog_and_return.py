@@ -84,7 +84,7 @@ class CatalogAndReturnTests(unittest.TestCase):
             recap = decision(text=f"There are {count} currently available choices. Return the complete listed items for {quote['facts']['calculations'][0]['result']} to the original card. Do you approve submission?")
             self.assertIn(str(count), recap.content)
             received = UserMessage(role="user", content="That is the complete list. Submit this exact return to my original card.")
-            received = decision("execute_return", {"proposal_id": quote["proposal_id"]})
+            received = decision("submit_change", {"kind": "return", "parameters": params})
             self.assertEqual(json.loads(received.content)["state"], "pending")
             self.assertEqual(state["proposals"][quote["proposal_id"]]["state"], "prepared")  # result not consumed yet
             received = decision("inspect_change_result", {"proposal_id": quote["proposal_id"]})

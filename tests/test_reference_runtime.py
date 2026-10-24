@@ -138,6 +138,7 @@ class ReferenceRuntimeTests(unittest.TestCase):
                     resource_root=ROOT / "agent", model_configs=[{"model": "offline-contract-model"}])
                 with activate_agent_context(context):
                     agent = create_agent()
+                    agent.gateway.live_actions = agent.gateway.compatibility_actions
                 host = Environment("retail_plus", policy="", tools=kit)
                 initial_hash = runtime.environment.get_db_hash()
                 state = agent.get_init_state()
@@ -159,7 +160,7 @@ class ReferenceRuntimeTests(unittest.TestCase):
                     recap, state = agent.generate_next_message(incoming, state)
                     self.assertFalse(recap.tool_calls)
                     self.assertIn("Please confirm", recap.content)
-                    self.assertEqual(state["reviewed"], {"proposal-1": state["user_turn"]})
+                    self.assertEqual(state["quote_response_turns"], {"proposal-1": state["user_turn"]})
                     self.assertEqual(runtime.environment.get_db_hash(), initial_hash)
                     # No business write until the actual later approval message.
                     writes = lambda: [request for request in requests if request["method"] != "GET"

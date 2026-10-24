@@ -61,6 +61,7 @@ class ReplacementOptionTests(unittest.TestCase):
         for changed_key, preserved in (("size", ["size"]), ("color", ["color"])):
             original = deepcopy(self.shirt_target["options"])
             self.shirt_target["options"][changed_key] = "changed-value"
+            self.kit.get_product_variants("p0_shirt")
             with self.subTest(key=changed_key), self.assertRaisesRegex(ReadError, "required_option_changed"):
                 self.kit.prepare_change("exchange", self.params(preserve_options=preserved))
             self.shirt_target["options"] = original

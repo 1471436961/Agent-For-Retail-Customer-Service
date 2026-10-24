@@ -8,8 +8,8 @@ from support_agent.state import (
 from tau2.data_model.message import AssistantMessage, SystemMessage
 from support_agent.adapters.conversation_api import TRANSFER_NOTICE
 from support_agent.domain.gateway_failure import diagnose_gateway_failure
-from support_agent.domain.reply import REPLY_INSTRUCTIONS, render_model_reply
-from support_agent.workflow import checkpoint
+from support_agent.domain.reply import REPLY_INSTRUCTIONS, response_content
+from support_agent.progress import evidence_view, unresolved_operations
 from support_agent.domain.policy import business_rules
 import json
 
@@ -49,17 +49,8 @@ class RetailAgent:
             prompt = SERVICE_GOALS + (SYSTEM_PROMPT if current.verified_customer_id else IDENTITY_PROMPT)
             if current.verified_customer_id:
                 prompt += "\nApplicable business rules from the supplied materials: " + json.dumps(business_rules(), ensure_ascii=False)
-            if current.proposals:
-                progress = [{"proposal_id": identifier, "kind": p["facts"]["kind"],
-                             "order_id": p["facts"]["order_id"], "state": p["state"],
-                             "displayed_at_user_turn": current.reviewed.get(identifier)}
-                            for identifier, p in current.proposals.items()]
-                prompt += "\nTrusted conversation progress (not customer consent): " + json.dumps(
-                    {"user_turn": current.user_turn, "changes": progress})
-            if current.submissions:
-                prompt += "\nActual submitted-change outcomes: " + json.dumps(list(current.submissions.values()))
             if current.verified_customer_id:
-                prompt += "\nCurrent workflow checkpoint (evidence, not customer intent): " + json.dumps(checkpoint(current))
+                prompt += "\nRecorded evidence and outcomes: " + json.dumps(evidence_view(current))
             actions = self.gateway.actions_for(current)
             messages = [SystemMessage(role="system", content=prompt + REPLY_INSTRUCTIONS, timestamp=None),
                         *self.gateway.project_history(current.history)]
@@ -86,10 +77,13 @@ class RetailAgent:
                     return self._stop(current, "tool_round_limit")
                 if isinstance(reply, AssistantMessage) and not reply.tool_calls and reply.content:
                     try:
-                        text = render_model_reply(reply.content)
+                        text, complete = response_content(reply.content)
                     except ValueError as error:
                         raise ProtocolError(str(error)) from None
-                    reply = reply.model_copy(update={"content": text})
+                    if complete and unresolved_operations(current):
+                        raise ProtocolError("Cannot finish with an unattempted quote or uncertain write. Resolve or withdraw it, and address all goals")
+                    reply = reply.model_copy(update={"content": text,
+                        "raw_data": {"retail_service_complete": complete}})
                 candidate = current.model_copy(deep=True)
                 record_reply(candidate, reply, {action.name: action for action in actions}, live=True)
             except ProtocolError as error:
@@ -115,9 +109,16 @@ class RetailAgent:
             return reply, candidate.model_dump(mode="json")
 
     @staticmethod
+    def is_stop(message):
+        """The documented native hook; completion is explicitly model-chosen."""
+        return (isinstance(message, AssistantMessage) and not message.tool_calls and
+                bool(message.raw_data and message.raw_data.get("retail_service_complete") is True))
+
+    @staticmethod
     def _handoff_reply(state):
         text = TRANSFER_NOTICE if state.handoff == "accepted" else "The transfer outcome is unknown. I will stop automated operations and will not retry it."
-        reply = AssistantMessage(role="assistant", content=text, timestamp=None)
+        reply = AssistantMessage(role="assistant", content=text, timestamp=None,
+                                 raw_data={"retail_service_complete": state.handoff == "accepted"})
         record_reply(state, reply, {})
         return reply, state.model_dump(mode="json")
 

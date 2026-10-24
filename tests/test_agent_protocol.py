@@ -352,7 +352,7 @@ class ProtocolTests(unittest.TestCase):
         reply, state = self.agent.generate_next_message(user(), self.agent.get_init_state())
         self.assertIsNone(state["halt_reason"])
         self.assertFalse(reply.tool_calls)
-        self.assertEqual(state["reviewed"], {})
+        self.assertEqual(state["quote_response_turns"], {})
         self.assertEqual(state["tool_rounds"], 0)
         self.transport.assert_not_called()
 

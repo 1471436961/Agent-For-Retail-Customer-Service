@@ -1,7 +1,7 @@
 """Completion means a real SDK database change, not a canned chatbot response.
 
 Provider decisions are controlled here. These tests check orchestration and
-actual effects; semantic competence is checked separately with a real model.
+actual effects; semantic competence must be verified separately with a real model.
 """
 import json
 import unittest
@@ -19,7 +19,7 @@ from tau2.hyper.agent_context import activate_agent_context, build_agent_context
 
 
 class TaskCompletionTests(unittest.TestCase):
-    def build(self, kind="exchange"):
+    def build(self, kind="exchange", *, compatibility=True):
         self.kit, self.runtime, self.requests = reference_kit()
         self.case = SEED["cases"][1 if kind in {"return", "exchange"} else 0]
         reader, _, _ = reference_kit()
@@ -29,6 +29,8 @@ class TaskCompletionTests(unittest.TestCase):
             resource_root=ROOT / "agent", model_configs=[{"model": "offline-completion-test"}])
         with activate_agent_context(context):
             self.agent = create_agent()
+        if compatibility:
+            self.agent.gateway.live_actions = self.agent.gateway.compatibility_actions
         self.host = Environment("retail_plus", policy="", tools=self.kit)
         self.state = self.agent.get_init_state()
         self.model = self.enterContext(patch("tau2.hyper.agent_context.generate"))
@@ -71,7 +73,7 @@ class TaskCompletionTests(unittest.TestCase):
                 recap = self.decision(prepared, text=explanation)
                 self.assertEqual(recap.content, explanation)
                 self.assertIn("Please confirm", recap.content)
-                self.assertEqual(self.state["reviewed"], {"proposal-1": self.state["user_turn"]})
+                self.assertEqual(self.state["quote_response_turns"], {"proposal-1": self.state["user_turn"]})
                 self.assertEqual(self.writes(), [])
                 self.state = self.agent.get_init_state(deepcopy(self.state["history"]))
                 approval = UserMessage(role="user", content="This is the entire requested change. I approve the exact displayed proposal; submit it.")
@@ -100,7 +102,7 @@ class TaskCompletionTests(unittest.TestCase):
                       text="No. The proposal is still unsubmitted, and no shipment is confirmed.")
         self.assertEqual(self.writes(), [])
         self.assertEqual(self.state["proposals"]["proposal-1"]["state"], "prepared")
-        self.assertIn("proposal-1", self.state["reviewed"])
+        self.assertIn("proposal-1", self.state["quote_response_turns"])
 
     def test_prepare_cannot_execute_before_actual_display_and_later_approval(self):
         self.build()
@@ -113,7 +115,7 @@ class TaskCompletionTests(unittest.TestCase):
         self.assertFalse(reply.tool_calls)
         self.assertIn("Please confirm", reply.content)
         self.assertEqual(self.writes(), [])
-        self.assertIn("proposal-1", self.state["reviewed"])
+        self.assertIn("proposal-1", self.state["quote_response_turns"])
         # No customer input has occurred since that display. Even a subsequent
         # tool result must not grant permission by advancing only a tool round.
         self.model.side_effect = None
@@ -128,7 +130,7 @@ class TaskCompletionTests(unittest.TestCase):
         withdraw = self.decision(prepared, "invalidate_change", {"proposal_id": "proposal-1"})
         outcome = self.result(withdraw)
         reply = self.decision(outcome, text="The draft has been withdrawn; nothing was submitted.")
-        self.assertIsNone(self.state["review_to_display"])
+        self.assertIsNone(self.state["quote_response_pending"])
         self.assertEqual(self.state["proposals"]["proposal-1"]["state"], "withdrawn")
         self.assertNotIn("Please confirm", reply.content)
         self.assertEqual(self.writes(), [])
@@ -141,7 +143,7 @@ class TaskCompletionTests(unittest.TestCase):
         history = deepcopy(self.state["history"])
         history[-1]["content"] = legacy_review_text(proposal)
         restored = self.agent.get_init_state(history)
-        self.assertEqual(restored["reviewed"], self.state["reviewed"])
+        self.assertEqual(restored["quote_response_turns"], self.state["quote_response_turns"])
 
     def test_catalog_counts_and_order_discovery_use_actual_records(self):
         self.build()
@@ -206,7 +208,7 @@ class TaskCompletionTests(unittest.TestCase):
                    + json.dumps(address) + ". Do you approve both exact changes?")
         recap = self.decision(prepared_order, text=summary)
         self.assertEqual(recap.content, summary)
-        self.assertEqual(set(self.state["reviewed"]), {"proposal-1", "proposal-2"})
+        self.assertEqual(set(self.state["quote_response_turns"]), {"proposal-1", "proposal-2"})
         self.assertEqual(self.writes(), [])
         first = self.result(self.decision(UserMessage(role="user", content="I approve both displayed address changes. Apply both."),
                                           "execute_default_address", {"proposal_id": "proposal-1"}))

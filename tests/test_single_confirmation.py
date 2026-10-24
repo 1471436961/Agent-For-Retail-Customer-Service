@@ -37,7 +37,7 @@ class SingleConfirmationTests(unittest.TestCase):
     def test_single_quote_approval_executes_without_another_display(self):
         p, text = self.quote()
         restored = self.agent.get_init_state(deepcopy(self.state["history"]))
-        self.assertEqual(restored["reviewed"], self.state["reviewed"])
+        self.assertEqual(restored["quote_response_turns"], self.state["quote_response_turns"])
         self.state = restored
         outcome = self.result(self.decision(UserMessage(role="user", content="That is the complete change I approve. Submit it now."),
             "execute_exchange", {"proposal_id": p["proposal_id"]}))
@@ -85,7 +85,7 @@ class SingleConfirmationTests(unittest.TestCase):
                 p, _ = self.quote()
                 args = ({"proposal_id": p["proposal_id"]} if action == "review_change" else
                         {"kind": "exchange", "parameters": self.params})
-                quoted_at = dict(self.state["reviewed"])
+                quoted_at = dict(self.state["quote_response_turns"])
                 read = self.result(self.decision(UserMessage(role="user", content="I approve the exact complete exchange. Submit it."), action, args))
                 receipt = self.result(self.decision(read, "execute_exchange", {"proposal_id": p["proposal_id"]}))
                 self.assertEqual(self.state["user_turn"], quoted_at[p["proposal_id"]] + 1)
@@ -99,11 +99,12 @@ class SingleConfirmationTests(unittest.TestCase):
         selected = self.params["replacements"][0]
         product_id = next(i["product_id"] for i in old if i["item_id"] == selected["existing_item_id"])
         self.runtime.environment.tools.db.products[product_id].variants[selected["replacement_item_id"]].price += 5
-        refreshed = self.result(self.decision(UserMessage(role="user", content="Please check if the price changed. I have not approved a different amount."),
-            "prepare_change", {"kind": "exchange", "parameters": self.params}))
+        read = self.result(self.decision(UserMessage(role="user", content="Please check if the price changed. I have not approved a different amount."),
+            "read_products", {"product_ids": [product_id]}))
+        refreshed = self.result(self.decision(read, "prepare_change", {"kind": "exchange", "parameters": self.params}))
         updated = json.loads(refreshed.content)
         self.assertNotEqual(updated["proposal_id"], p["proposal_id"])
         self.decision(refreshed, text="The actual quote changed. Here is the updated amount for your approval.")
-        self.assertNotIn(p["proposal_id"], self.state["reviewed"])
+        self.assertNotIn(p["proposal_id"], self.state["quote_response_turns"])
         self.assertEqual(self.state["proposals"][p["proposal_id"]]["state"], "superseded")
         self.assertEqual(self.writes(), [])

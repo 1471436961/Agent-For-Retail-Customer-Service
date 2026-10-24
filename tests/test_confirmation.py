@@ -26,6 +26,7 @@ class ConfirmationTests(unittest.TestCase):
                                       model_configs=[{"model": "offline_model", "constraints": {"max_tokens": 1024}}])
         with activate_agent_context(context):
             self.agent = create_agent()
+        self.agent.gateway.live_actions = self.agent.gateway.compatibility_actions
         # Agent and toolkit must both have genuine verification evidence.
         self.state = self.agent.get_init_state([
             user("My email is alex.p0@example.test."),
@@ -198,7 +199,7 @@ class ConfirmationTests(unittest.TestCase):
     def test_json_resume_restores_display_evidence(self):
         p = self.reviewed()
         restored = self.agent.get_init_state(self.state["history"])
-        self.assertEqual(restored["reviewed"], self.state["reviewed"])
+        self.assertEqual(restored["quote_response_turns"], self.state["quote_response_turns"])
         self.state = json.loads(json.dumps(restored))
         out, _ = self.host(self.decision(user("Proceed."), "execute_default_address", {"proposal_id": p["proposal_id"]}))
         self.assertEqual(out["state"], "completed")

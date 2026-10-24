@@ -59,7 +59,7 @@ class FullRegressionTests(unittest.TestCase):
         revised = {**params, "replacements": params["replacements"] * 2, "payment_method_id": "p0_paypal"}
         newer, _ = self.host(self.decision(user("等一下，两件都要改，付款也改用我保存的 PayPal。"), "prepare_change", {"kind": "modify_items", "parameters": revised}))
         self.assertEqual(self.backend.writes(), [])
-        self.assertNotIn(p["proposal_id"], self.state["reviewed"])
+        self.assertNotIn(p["proposal_id"], self.state["quote_response_turns"])
         self.host(self.decision(user("把更正后的内容完整回顾一下。"), "review_change", {"proposal_id": newer["proposal_id"]}))
         out, text = self.host(self.decision(user("这是全部，照这个更正后的方案办理。"), "execute_item_modification", {"proposal_id": newer["proposal_id"]}), final="The complete revised change was made using PayPal.")
         self.assertEqual(out["state"], "completed")

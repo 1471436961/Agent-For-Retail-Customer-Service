@@ -73,6 +73,7 @@ class ContractBoundaryTests(unittest.TestCase):
         return state
 
     def reviewed_cancellation(self):
+        self.agent.gateway.live_actions = self.agent.gateway.compatibility_actions
         state = self.verified_state()
         reply, state = self.decision(state, "Cancel the entire pending order: no longer needed.",
             "prepare_change", {"kind": "cancel", "parameters": {
@@ -141,15 +142,15 @@ class ContractBoundaryTests(unittest.TestCase):
             ToolCall(id="historical-catalog", name="list_products", arguments={})]).model_dump(mode="json"),
             ToolMessage(role="tool", id="historical-catalog", content='{"products":[]}').model_dump(mode="json")])
         restored = self.agent.get_init_state(history)
-        self.assertEqual(restored["reviewed"], {})
-        self.assertEqual(restored["review_to_display"]["proposal_id"], proposal["proposal_id"])
+        self.assertEqual(restored["quote_response_turns"], {})
+        self.assertEqual(restored["quote_response_pending"]["proposal_id"], proposal["proposal_id"])
         calls = self.provider.call_count
         self.provider.return_value = wire.completion(content=narration)
         reply, restored = self.agent.generate_next_message(
             UserMessage(role="user", content="Please continue."), restored)
         self.assertEqual(reply.content, narration)
         self.assertEqual(self.provider.call_count, calls + 1)
-        self.assertIn(proposal["proposal_id"], restored["reviewed"])
+        self.assertIn(proposal["proposal_id"], restored["quote_response_turns"])
         self.assertEqual(self.backend.writes(), [])
 
     def test_transfer_metadata_matches_the_mutating_openapi_operation(self):

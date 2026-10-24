@@ -108,6 +108,7 @@ class GatewayWireTests(unittest.TestCase):
         self.assertEqual(result_ids, ids)
 
     def test_preparation_and_plan_wire_schemas_include_complete_field_shapes(self):
+        self.agent.gateway.live_actions = self.agent.gateway.compatibility_actions
         customer = self.backend.records["customers"][0]
         self.provider.side_effect = [completion(arguments={"email": customer["email"]}),
                                     completion(content="How can I help with your account?")]

@@ -20,7 +20,7 @@ class ProtocolError(ValueError):
 
 class SessionState(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     history: list[dict] = Field(default_factory=list)
     pending_call_ids: list[str] = Field(default_factory=list)
     seen_call_ids: list[str] = Field(default_factory=list)
@@ -39,8 +39,8 @@ class SessionState(BaseModel):
     evidence_call_ids: list[str] = Field(default_factory=list)
     pending_calls: list[dict] = Field(default_factory=list)
     proposals: dict[str, dict] = Field(default_factory=dict)
-    reviewed: dict[str, int] = Field(default_factory=dict)
-    review_to_display: dict | None = None
+    quote_response_turns: dict[str, int] = Field(default_factory=dict)
+    quote_response_pending: dict | None = None
     user_turn: int = 0
     handoff: str | None = None
     receipt_facts_to_display: list[dict] = Field(default_factory=list)
@@ -62,7 +62,7 @@ def store(state, message):
     state.history.append(message.model_dump(mode="json", exclude_none=True))
 
 
-def has_prior_recap_turn(state):
+def has_prior_assistant_turn(state):
     """Structural evidence only; the model judges recap completeness and consent."""
     customer = next((index for index in range(len(state.history) - 1, -1, -1)
                      if state.history[index]["role"] == "user"), None)
@@ -93,11 +93,11 @@ def submission_reference(state, kind, target):
     return json.dumps([state.user_turn, kind, target], separators=(",", ":"))
 
 
-def pending_reviews(state):
-    if not state.review_to_display:
+def unanswered_quotes(state):
+    if not state.quote_response_pending:
         return []
     return [proposal for identifier, proposal in state.proposals.items()
-            if proposal["state"] == "prepared" and identifier not in state.reviewed]
+            if proposal["state"] == "prepared" and identifier not in state.quote_response_turns]
 
 
 def receive(state, message):
@@ -123,7 +123,7 @@ def receive(state, message):
                 if call and call["name"] in EXECUTE_ACTIONS:
                     # An execution error supplies no successful receipt. Never
                     # let the old display record authorize another attempt.
-                    state.reviewed.pop(call["arguments"].get("proposal_id"), None)
+                    state.quote_response_turns.pop(call["arguments"].get("proposal_id"), None)
                 if call and call["name"] == "get_customer_summary":
                     state.customer_profile_loaded = False
                     state.customer_email = None
@@ -158,38 +158,39 @@ def receive(state, message):
                     if state.proposals.get(identifier) == body:
                         # An unchanged quote read does not reset the actual
                         # earlier response or force another customer approval.
-                        if identifier not in state.reviewed:
-                            state.review_to_display = body
+                        if identifier not in state.quote_response_turns:
+                            state.quote_response_pending = body
                         continue
                     target = body["facts"].get("order_id")
                     for previous_id, previous in state.proposals.items():
-                        if previous["facts"].get("order_id") == target and previous.get("state") == "prepared":
-                            state.reviewed.pop(previous_id, None)
+                        if (previous["facts"].get("order_id") == target and previous.get("state") == "prepared"
+                                and previous["facts"].get("kind") == body["facts"].get("kind")):
+                            state.quote_response_turns.pop(previous_id, None)
                             previous["state"] = "superseded"
                     state.proposals[identifier] = body
                     # The successful preparation already contains the complete
                     # verified proposal. No second tool read is required to show it.
-                    state.review_to_display = body
+                    state.quote_response_pending = body
             elif call["name"] == "review_change":
                 proposal = body.get("review")
                 identifier = call["arguments"].get("proposal_id")
                 if proposal == state.proposals.get(identifier) and proposal and proposal.get("state") == "prepared":
-                    if identifier not in state.reviewed:
-                        state.review_to_display = proposal
+                    if identifier not in state.quote_response_turns:
+                        state.quote_response_pending = proposal
                 else:
-                    state.reviewed.pop(identifier, None)
-                    if state.review_to_display and state.review_to_display["proposal_id"] == identifier:
-                        state.review_to_display = None
+                    state.quote_response_turns.pop(identifier, None)
+                    if state.quote_response_pending and state.quote_response_pending["proposal_id"] == identifier:
+                        state.quote_response_pending = None
             elif call["name"] == "invalidate_change":
                 identifier = call["arguments"].get("proposal_id")
-                state.reviewed.pop(identifier, None)
+                state.quote_response_turns.pop(identifier, None)
                 if identifier in state.proposals:
                     state.proposals[identifier]["state"] = body.get("state", "withdrawn")
-                if state.review_to_display and state.review_to_display["proposal_id"] == identifier:
-                    state.review_to_display = None
+                if state.quote_response_pending and state.quote_response_pending["proposal_id"] == identifier:
+                    state.quote_response_pending = None
             elif call["name"] in EXECUTE_ACTIONS:
                 identifier = call["arguments"].get("proposal_id")
-                state.reviewed.pop(identifier, None)
+                state.quote_response_turns.pop(identifier, None)
                 if identifier in state.proposals:
                     state.proposals[identifier]["state"] = body.get("state", "unknown")
                     facts = state.proposals[identifier]["facts"]
@@ -209,11 +210,13 @@ def receive(state, message):
                 # A direct submission supersedes the unattempted draft of the
                 # same target in the toolkit; do not subsequently display it.
                 for proposal_id, proposal in state.proposals.items():
-                    if proposal["facts"]["order_id"] == state.submissions[identifier]["order_id"] and proposal["state"] == "prepared":
-                        proposal["state"] = "superseded"
-                        state.reviewed.pop(proposal_id, None)
-                if state.review_to_display and state.review_to_display["facts"]["order_id"] == state.submissions[identifier]["order_id"]:
-                    state.review_to_display = None
+                    if (proposal["facts"]["order_id"] == state.submissions[identifier]["order_id"]
+                            and proposal["facts"]["kind"] == call["arguments"]["kind"]
+                            and proposal["state"] == "prepared"):
+                        proposal["state"] = body.get("state", "unknown") if proposal_id == body.get("proposal_id") else "superseded"
+                        state.quote_response_turns.pop(proposal_id, None)
+                if state.quote_response_pending and state.quote_response_pending["facts"]["order_id"] == state.submissions[identifier]["order_id"]:
+                    state.quote_response_pending = None
             elif call["name"] == "inspect_change_result":
                 identifier = call["arguments"].get("proposal_id")
                 outcome = body.get("write_outcome")
@@ -239,11 +242,11 @@ def receive(state, message):
                 else:
                     ids = set(state.proposals)
                 for identifier in ids:
-                    state.reviewed.pop(identifier, None)
+                    state.quote_response_turns.pop(identifier, None)
                     if identifier in state.proposals and state.proposals[identifier]["state"] == "prepared":
                         state.proposals[identifier]["state"] = "paused"
-                if state.review_to_display and state.review_to_display["proposal_id"] in ids:
-                    state.review_to_display = None
+                if state.quote_response_pending and state.quote_response_pending["proposal_id"] in ids:
+                    state.quote_response_pending = None
                 if call["name"] == "transfer_to_human":
                     state.handoff = body.get("state")
         state.pending_calls = []
@@ -286,8 +289,8 @@ def record_reply(state, reply, actions, *, live=False):
     for call in calls:
         if state.handoff in {"accepted", "unknown"}:
             raise ProtocolError("Terminal handoff forbids further tool calls")
-        if call.name == DIRECT_ACTION and not has_prior_recap_turn(state):
-            raise ProtocolError("A submitted change needs an actual earlier assistant recap and later customer input")
+        if call.name == DIRECT_ACTION and not has_prior_assistant_turn(state):
+            raise ProtocolError("A submitted change needs an earlier assistant response and later customer input; the model must establish the exact recap and consent")
         if call.name == DIRECT_ACTION:
             previous = state.submissions.get(call.arguments.get("request_id"), {})
             if previous.get("state") in {"accepted", "completed", "attempted", "pending", "unknown"}:
@@ -295,7 +298,7 @@ def record_reply(state, reply, actions, *, live=False):
         if call.name in EXECUTE_ACTIONS:
             identifier = call.arguments.get("proposal_id")
             proposal = state.proposals.get(identifier)
-            if (identifier not in state.reviewed or state.user_turn <= state.reviewed[identifier] or
+            if (identifier not in state.quote_response_turns or state.user_turn <= state.quote_response_turns[identifier] or
                     not proposal or proposal.get("state") != "prepared" or
                     proposal["facts"].get("kind") != EXECUTE_ACTIONS[call.name]):
                 raise ProtocolError("Execution requires the exact displayed proposal and later user input")
@@ -310,15 +313,15 @@ def record_reply(state, reply, actions, *, live=False):
         state.seen_call_ids.extend(identifiers)
         state.tool_rounds += 1
         state.request_tool_rounds += 1
-    if state.review_to_display and has_text and not calls:
-        proposals = pending_reviews(state)
+    if state.quote_response_pending and has_text and not calls:
+        proposals = unanswered_quotes(state)
         # Chronology only: a genuine customer-facing response followed these
         # quote results. The LLM must explain all relevant facts and judge later
         # consent; matching a fixed footer cannot prove either meaning. Legacy
         # recaps remain valid text during replay, without requiring that format.
         for proposal in proposals:
-            state.reviewed[proposal["proposal_id"]] = state.user_turn
-        state.review_to_display = None
+            state.quote_response_turns[proposal["proposal_id"]] = state.user_turn
+        state.quote_response_pending = None
     if state.handoff == "accepted" and reply.content != TRANSFER_NOTICE:
         raise ProtocolError("Accepted handoff requires exact notice")
     if has_text and not calls and state.receipt_facts_to_display and state.handoff not in {"accepted", "unknown"}:

@@ -129,7 +129,8 @@ class ContractBoundaryTests(unittest.TestCase):
         reply, state = self.decision(self.agent.get_init_state(), "Please help.",
             "verify_customer", {"email": 42}, narration="I will verify this account.")
         self.assertFalse(reply.tool_calls)
-        self.assertEqual(state["halt_reason"], "invalid_model_reply")
+        self.assertIsNone(state["halt_reason"])
+        self.assertIsNotNone(state["protocol_diagnostic"])
         self.assertEqual(self.backend.calls, [])
 
     def test_historical_tool_narration_does_not_count_as_a_displayed_change_review(self):
@@ -160,7 +161,9 @@ class ContractBoundaryTests(unittest.TestCase):
         self.assertEqual(tool.info["tool_type"], "generic")
         self.assertEqual(tool.info["mutates_state"], operation["x-api-mutates-state"])
         mutators = {name for name, tool in self.kit.get_tools().items() if tool.info["mutates_state"]}
-        self.assertEqual(mutators, {*EXECUTE_ACTIONS, "submit_change", "submit_changes", "transfer_to_human"})
+        self.assertEqual(mutators, {*EXECUTE_ACTIONS, "submit_change", "submit_changes", "transfer_to_human",
+            "update_default_address", "update_order_address", "cancel_order", "change_order_payment",
+            "modify_order_items", "request_return", "request_exchange"})
 
     def test_bad_nested_plan_targets_fail_before_any_operation(self):
         self.kit.verify_customer(email="alex.p0@example.test")

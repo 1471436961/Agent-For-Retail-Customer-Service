@@ -14,6 +14,7 @@ from support_agent.domain.reply import (
 from support_agent.progress import evidence_view, unresolved_operations
 from support_agent.domain.policy import business_rules
 import json
+from pydantic import ValidationError
 
 
 class RetailAgent:
@@ -37,6 +38,8 @@ class RetailAgent:
         current.turn += 1
         if current.handoff in {"accepted", "unknown"}:
             return self._handoff_reply(current)
+        if current.halt_reason == "invalid_model_reply":
+            current.halt_reason = None  # Recover older serialized sessions too.
         if current.halt_reason:
             return self._stop(current, current.halt_reason)
         try:
@@ -54,6 +57,11 @@ class RetailAgent:
             if current.verified_customer_id:
                 prompt += "\nRecorded evidence and outcomes: " + json.dumps(evidence_view(current))
                 prompt += NEXT_DECISION
+            if current.protocol_diagnostic:
+                prompt += ("\nThe previous model draft was rejected before execution: " + current.protocol_diagnostic +
+                           ". Continue the customer's actual request using verified facts and real approvals already in history. "
+                           "Do not request identity or confirmation again merely because your draft was malformed. "
+                           "Use the operation-specific write tool with its displayed fields; keep text concise.")
             actions = self.gateway.actions_for(current)
             messages = [SystemMessage(role="system", content=prompt + REPLY_INSTRUCTIONS, timestamp=None),
                         *self.gateway.project_history(current.history)]
@@ -69,9 +77,19 @@ class RetailAgent:
             except Exception as error:
                 # Provider failures are not retried by the Agent.
                 current.gateway_diagnostic = diagnose_gateway_failure(error)
+                malformed = (isinstance(error, (json.JSONDecodeError, ValidationError)) or
+                             (current.gateway_diagnostic.origin == "model_broker" and
+                              current.gateway_diagnostic.reported_exception_type == "JSONDecodeError"))
+                if malformed:
+                    current.protocol_diagnostic = "Malformed model output: return concise text or one complete tool call with object arguments. No proposed call was executed"
+                    if attempt == 0 and current.model_calls < self.gateway.limits.max_model_calls:
+                        messages = [*messages, SystemMessage(role="system", timestamp=None,
+                            content=current.protocol_diagnostic + ". Keep the fixed model settings and use the supplied operation-specific schema.")]
+                        continue
+                    return self._stop(current, "invalid_model_reply")
                 return self._stop(current, "gateway_failure")
             try:
-                if isinstance(reply, AssistantMessage) and output_was_truncated(reply):
+                if isinstance(reply, AssistantMessage) and not reply.tool_calls and output_was_truncated(reply):
                     raise ProtocolError("Provider reported output truncation. No draft content or call was executed. Return a shorter complete reply within the unchanged token settings")
                 reply = normalize_call_ids(current, reply)
                 reply = bind_submission_reference(current, reply)
@@ -105,12 +123,13 @@ class RetailAgent:
                         ". Return a corrected reply using the supplied schemas and actual history. "
                         "Retail policy permits exactly one tool call at a time, followed by its actual result. "
                         "A write requires a complete real recap and later clear customer approval. "
-                        "Use submit_change when the customer already approved a natural-language recap; "
+                        "Use the operation-specific write tool when the customer already approved a natural-language recap; "
                         "an internal prepared proposal is not a business requirement. "
                         "If approval or information is missing, ask the customer. No rejected call has taken effect.")]
                     continue
                 return self._stop(current, "invalid_model_reply")
             candidate.protocol_diagnostic = None
+            candidate.gateway_diagnostic = None
             return reply, candidate.model_dump(mode="json")
 
     @staticmethod
@@ -134,7 +153,11 @@ class RetailAgent:
 
     @staticmethod
     def _stop(state, reason):
-        state.halt_reason = reason
+        # A rejected model draft executed nothing. It must not permanently lock
+        # a verified customer out of a still-valid request on every later turn.
+        # Real resource limits, invalid host sequences and gateway failures keep
+        # their terminal behavior; uncertain actual writes remain in evidence.
+        state.halt_reason = None if reason == "invalid_model_reply" else reason
         if reason == "gateway_failure":
             if state.gateway_diagnostic and state.gateway_diagnostic.stage == "history_projection":
                 explanation = "I could not continue because the conversation history could not be prepared for the model."

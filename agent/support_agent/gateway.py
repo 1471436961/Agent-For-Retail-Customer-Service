@@ -10,7 +10,7 @@ from pydantic import Field, create_model
 
 from tau2.data_model.message import MultiToolMessage, ToolMessage
 from support_agent.state import decode, has_prior_assistant_turn
-from support_agent.adapters.change_tools import ACTION_NAMES, EXECUTE_ACTIONS, DIRECT_ACTION, BATCH_DIRECT_ACTION
+from support_agent.adapters.change_tools import ACTION_NAMES, EXECUTE_ACTIONS, DIRECT_ACTION, BATCH_DIRECT_ACTION, DIRECT_WRITE_KINDS
 from support_agent.config import PREFERRED_MODEL
 from support_agent.domain.money import ArithmeticOperation
 from support_agent.domain.presentation import proposal_view
@@ -65,18 +65,19 @@ class GatewayAdapter:
                 "The model supplies the operands; this tool does not choose a business formula.")))})
             if action.name == "calculate" else action for action in self.live_actions)
         # Old callable operations remain available to historical replay and
-        # compatibility tests. New decisions have one business write channel.
+        # compatibility tests. New single writes have operation-specific schemas;
+        # all paths still share the same business validation and executor.
         self.compatibility_actions = self.live_actions
         live_names = {"verify_customer", "get_customer_summary", "list_customer_orders",
                       "get_owned_order", "list_products", "read_products", "read_context",
                       "get_catalog_summary", "calculate", "prepare_change", "prepare_changes",
-                      "submit_change", "submit_changes", "invalidate_change", "inspect_change_result",
-                      "get_service_status", "transfer_to_human"}
+                      "submit_changes", "invalidate_change", "inspect_change_result",
+                      "get_service_status", "transfer_to_human", *DIRECT_WRITE_KINDS}
         self.live_actions = tuple(action for action in self.live_actions if action.name in live_names)
         descriptions = {
-            "verify_customer": "Independently verify by email OR full first/last name and postal code; match a supplied customer ID before profile details. Include the already-named order_id; for its item changes/exchange select include_product_variants=true for related catalogs. For order discovery select include_order_details=true. product_names selects explicitly requested catalog names/counts. All optional reads happen AFTER verification and return actual requested_order/requested_context records. No permission to read is needed. Reuse those records. Use null claimed_customer_id only when absent. Profile failure preserves verification; recover via get_customer_summary.",
+            "verify_customer": "Independently verify by email OR full first/last name and postal code; match a supplied customer ID before details. Include an already-named order_id; for its item changes/exchange select include_product_variants=true. For unknown orders select include_order_details=true AND product_names for named products needing variants/counts. include_product_variants without order_id does not load discovery catalogs. All optional reads happen AFTER verification and return actual requested_order/requested_context records; reuse them. Use null claimed_customer_id only when absent. Profile failure preserves verification; recover via get_customer_summary.",
             "get_owned_order": "Read one exact owned order ID, checking membership and owner. Preserve #. Returns items, status and payments. For item-change/exchange requests, include_product_variants=true batches this order's related catalogs. Otherwise select relevant product IDs for read_products/read_context. Reuse actual records already returned.",
-            "prepare_change": "READ ONLY: obtain a grounded quote before explaining a change. No permission to prepare is needed. parameters MUST match kind: address operations need address, not replacements/payment. Use supersedes to replace old unsubmitted drafts on this target in the SAME call; no prior invalidation needed. A subset of unchanged quoted rows can reuse their component calculations. After approval use submit_change. Select exact observed IDs.",
+            "prepare_change": "READ ONLY: optional grounded quote when calculations or facts are missing. No permission to prepare is needed. parameters MUST match kind: address operations need address, not replacements/payment. Use supersedes to replace old unsubmitted drafts on this target in the SAME call; no prior invalidation needed. Reuse known component calculations when reducing a quoted list; a single recorded return price needs no quote. After recap and approval use the operation-specific write tool, not another quote. Select exact observed IDs.",
             "submit_change": "WRITE: submit the exact complete change already explained and clearly approved in a later customer reply. This performs one real business API write after fresh checks. Use it immediately on approval; prepare_change would only quote again. No proposal ID or extra confirmation is required. parameters use the actual observed IDs, saved settlement method and ordered item occurrences. A question alone or unmet condition is not consent. Never retry an uncertain write. request_id is filled by the Agent.",
         }
         self.live_actions = tuple(action.model_copy(update={
@@ -134,7 +135,7 @@ class GatewayAdapter:
             actions = tuple(action for action in self.live_actions
                          if action.name != "verify_customer"
                          if (action.name not in EXECUTE_ACTIONS or EXECUTE_ACTIONS[action.name] in ready_kinds)
-                         and (action.name not in {DIRECT_ACTION, BATCH_DIRECT_ACTION} or has_prior_assistant_turn(state)))
+                         and (action.name not in {DIRECT_ACTION, BATCH_DIRECT_ACTION, *DIRECT_WRITE_KINDS} or has_prior_assistant_turn(state)))
             key = (tuple(action.name for action in actions), tuple(state.owned_order_ids or []))
             if key not in self._grounded_cache:
                 self._grounded_cache[key] = self._ground_order_ids(actions, state.owned_order_ids)
@@ -166,7 +167,7 @@ class GatewayAdapter:
         result = []
         for action in actions:
             fields = {}
-            if action.name == "get_owned_order":
+            if action.name == "get_owned_order" or (action.name in DIRECT_WRITE_KINDS and "order_id" in action.params.model_fields):
                 fields["order_id"] = (order_id, Field(...))
             elif action.name == "read_context":
                 fields["order_ids"] = (list[order_id] | None, Field(default=None))

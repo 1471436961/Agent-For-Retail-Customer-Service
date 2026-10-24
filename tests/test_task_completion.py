@@ -16,6 +16,14 @@ from support_agent.domain.presentation import legacy_review_text, review_text
 from tau2.data_model.message import AssistantMessage, ToolCall, UserMessage
 from tau2.environment.environment import Environment
 from tau2.hyper.agent_context import activate_agent_context, build_agent_context
+from support_agent.adapters.change_tools import DIRECT_WRITE_KINDS
+
+
+def live_call(agent, name, args):
+    """Construct a controlled current tool choice; legacy tests retain the old ABI."""
+    if name == "submit_change" and name not in {action.name for action in agent.gateway.live_actions}:
+        return next(key for key,value in DIRECT_WRITE_KINDS.items() if value == args["kind"]), deepcopy(args["parameters"])
+    return name, deepcopy(args)
 
 
 class TaskCompletionTests(unittest.TestCase):
@@ -38,6 +46,8 @@ class TaskCompletionTests(unittest.TestCase):
 
     def decision(self, incoming, name=None, args=None, text=None):
         self.sequence += 1
+        if name is not None:
+            name,args = live_call(self.agent,name,args)
         self.model.return_value = (AssistantMessage(role="assistant", content=text) if name is None else
             AssistantMessage(role="assistant", tool_calls=[ToolCall(id=f"completion-{self.sequence}", name=name, arguments=args)]))
         reply, self.state = self.agent.generate_next_message(incoming, self.state)

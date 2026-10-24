@@ -91,7 +91,7 @@ class GroundedSelectionTests(unittest.TestCase):
         params["order_id"] = self.case["order_id"][1:]
         self.model.side_effect = [
             AssistantMessage(role="assistant", tool_calls=[ToolCall(id="bad-quote", name="prepare_change", arguments={"kind":"exchange", "parameters":params})]),
-            AssistantMessage(role="assistant", tool_calls=[ToolCall(id="approved-submit", name="submit_change", arguments={"kind":"exchange", "parameters":self.params})]),
+            AssistantMessage(role="assistant", tool_calls=[ToolCall(id="approved-submit", name="request_exchange", arguments=self.params)]),
         ]
         reply, self.state = self.agent.generate_next_message(UserMessage(role="user", content="I approve that exact complete exchange and settlement. Submit it."), self.state)
         outcome = json.loads(self.result(reply).content)
@@ -133,12 +133,16 @@ class GroundedSelectionTests(unittest.TestCase):
         self.assertTrue(ids)
         self.assertNotIn("get_product_variants", actions)
         self.assertNotIn("verify_customer", actions)
-        for name in ("prepare_change", "submit_change"):
+        for name in ("prepare_change",):
             definitions = actions[name].params.model_json_schema()["$defs"]
             for model in definitions.values():
                 field = model.get("properties", {}).get("order_id")
                 if field:
                     self.assertEqual(field.get("enum", [field.get("const")]), ids)
+        for name in ("update_order_address", "cancel_order", "change_order_payment",
+                     "modify_order_items", "request_return", "request_exchange"):
+            field = actions[name].params.model_json_schema()["properties"]["order_id"]
+            self.assertEqual(field.get("enum", [field.get("const")]), ids)
         self.assertEqual(self.writes(), [])
 
     def test_catalog_goal_and_pending_change_wait_for_consent_then_really_modify(self):

@@ -69,8 +69,9 @@ class CompletionBoundaryTests(unittest.TestCase):
             index = self.model.call_count - 1
             choice = schedule[index]
             if isinstance(choice, tuple):
+                name,args = completion.live_call(self.agent,choice[0],choice[1])
                 return AssistantMessage(role="assistant",tool_calls=[ToolCall(
-                    id=f"boundary-{index}",name=choice[0],arguments=deepcopy(choice[1]))])
+                    id=f"boundary-{index}",name=name,arguments=args)])
             if choice == "identity":
                 text = "Please provide your email or full first/last name and postal code for independent verification."
             elif choice == "choices":
@@ -130,7 +131,8 @@ class CompletionBoundaryTests(unittest.TestCase):
                 self.assertEqual(len(simulation.messages),16)
                 self.assertFalse(self.agent.is_stop(simulation.messages[-2]))
                 calls = [call.name for m in simulation.messages for call in (getattr(m,"tool_calls",None) or [])]
-                self.assertEqual(calls,["verify_customer","prepare_change","submit_change"])
+                expected_write = "request_exchange" if kind == "exchange" else "modify_order_items"
+                self.assertEqual(calls,["verify_customer","prepare_change",expected_write])
                 # Identity search remains first; all requested reads follow it.
                 self.assertEqual(self.requests[0]["path"],"/v1/customers/search")
 

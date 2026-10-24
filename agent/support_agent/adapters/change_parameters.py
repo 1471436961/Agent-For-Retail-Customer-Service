@@ -50,6 +50,22 @@ PARAMETERS_BY_KIND = {
 }
 
 
+def equivalent_change_parameters(kind, left, right):
+    """Compare typed parameters with omitted/explicit defaults treated equally.
+
+    Preserve all non-default constraints, ID occurrences, order and amounts.
+    This affects local draft/replay identity only, never business API bodies.
+    """
+    model = PARAMETERS_BY_KIND.get(kind)
+    if model is None:
+        return False
+    try:
+        return (model.model_validate(left, strict=True).model_dump(exclude_defaults=True) ==
+                model.model_validate(right, strict=True).model_dump(exclude_defaults=True))
+    except ValidationError:
+        return False
+
+
 def validate_change_shape(kind, parameters):
     """Bind an operation to its own schema, without interpreting user intent.
 

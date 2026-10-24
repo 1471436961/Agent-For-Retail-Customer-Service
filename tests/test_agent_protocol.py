@@ -255,7 +255,8 @@ class ProtocolTests(unittest.TestCase):
             with self.subTest(output=type(output).__name__):
                 self.provider.return_value = output
                 reply, state = self.agent.generate_next_message(user(), self.agent.get_init_state())
-                self.assert_halt(state, "invalid_model_reply")
+                self.assertIsNone(state["halt_reason"])
+                self.assertTrue(state["protocol_diagnostic"])
                 self.assertFalse(reply.tool_calls)
                 self.transport.assert_not_called()
 
@@ -294,7 +295,8 @@ class ProtocolTests(unittest.TestCase):
     def test_repeated_invalid_reply_stops_after_one_correction(self):
         self.provider.return_value = calls_reply(call(arguments={"customer_id": "", "email": 42}))
         _, state = self.agent.generate_next_message(user(), self.agent.get_init_state())
-        self.assert_halt(state, "invalid_model_reply")
+        self.assertIsNone(state["halt_reason"])
+        self.assertTrue(state["protocol_diagnostic"])
         self.assertEqual(self.provider.call_count, 2)
         self.assertEqual(state["tool_rounds"], 0)
         self.transport.assert_not_called()
@@ -303,7 +305,8 @@ class ProtocolTests(unittest.TestCase):
         agent = self.build(self.make_context(limits={"max_model_calls": 1}))
         self.provider.return_value = calls_reply(call(arguments={"customer_id": "", "email": 42}))
         _, state = agent.generate_next_message(user(), agent.get_init_state())
-        self.assert_halt(state, "invalid_model_reply")
+        self.assertIsNone(state["halt_reason"])
+        self.assertTrue(state["protocol_diagnostic"])
         self.assertEqual(self.provider.call_count, 1)
         self.assertEqual(state["model_calls"], 1)
 

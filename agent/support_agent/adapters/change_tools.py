@@ -11,7 +11,8 @@ from support_agent.adapters.write_api import write_once, resume_workflow, observ
 from support_agent.adapters.conversation_api import transfer_once
 from support_agent.domain.plans import order_requests
 from support_agent.domain.receipts import customer_facts
-from support_agent.adapters.change_parameters import ChangeParameters, PlanRequest, SubmissionRequest, validate_change_shape
+from support_agent.adapters.change_parameters import ChangeParameters, PlanRequest, SubmissionRequest, ReplacementChoice, validate_change_shape, equivalent_change_parameters
+from support_agent.adapters.read_models import Address
 from support_agent.domain.policy import service_policy
 from support_agent.domain.observations import ObservedFacts, CurrentFacts
 
@@ -22,7 +23,29 @@ EXECUTE_ACTIONS = {"execute_default_address": "default_address", "execute_order_
                    "execute_payment": "payment", "execute_item_modification": "modify_items", "execute_return": "return", "execute_exchange": "exchange"}
 DIRECT_ACTION = "submit_change"
 BATCH_DIRECT_ACTION = "submit_changes"
-ACTION_NAMES = (*READ_ACTION_NAMES, *PREPARATION_ACTION_NAMES, *REVIEW_ACTION_NAMES, *PLAN_ACTION_NAMES, *EXECUTE_ACTIONS, DIRECT_ACTION, BATCH_DIRECT_ACTION)
+DIRECT_WRITE_KINDS = {
+    "update_default_address": "default_address", "update_order_address": "order_address",
+    "cancel_order": "cancel", "change_order_payment": "payment",
+    "modify_order_items": "modify_items", "request_return": "return", "request_exchange": "exchange",
+}
+ACTION_NAMES = (*READ_ACTION_NAMES, *PREPARATION_ACTION_NAMES, *REVIEW_ACTION_NAMES, *PLAN_ACTION_NAMES,
+                *EXECUTE_ACTIONS, DIRECT_ACTION, BATCH_DIRECT_ACTION, *DIRECT_WRITE_KINDS)
+
+
+def write_arguments(name, arguments):
+    """The same internal write contract, selected by a typed operation tool.
+
+    This maps structured tool fields only. It neither interprets customer text
+    nor infers consent, and preserves the caller's parameter values.
+    """
+    if name in DIRECT_WRITE_KINDS:
+        parameters = {k: v for k, v in arguments.items() if k != "request_id"}
+        if name in {"modify_order_items", "request_exchange"} and parameters.get("preserve_options") is None:
+            parameters.pop("preserve_options", None)
+        return {"kind": DIRECT_WRITE_KINDS[name],
+                "parameters": parameters,
+                "request_id": arguments.get("request_id", "")}
+    return arguments
 
 
 class ChangeTools(CustomerTools):
@@ -105,8 +128,9 @@ class ChangeTools(CustomerTools):
                        supersedes: list[str] | None = None) -> dict:
         """Quote the selected change from actual observed records, without writing.
 
-        This is a READ. When choices and settlement details are known, call it
-        immediately; never ask permission to prepare, calculate or show a quote.
+        This is an optional READ for missing calculations or facts. Reuse known
+        row differences and recorded single-item return prices without another
+        quote. Never ask permission to prepare, calculate or show a quote.
         Use its verified prices, totals and difference in ONE complete recap,
         then ask for submission approval. To refresh a record, read it explicitly;
         quotes reuse observed facts, while submission independently revalidates them. Do not offer to prepare it after an
@@ -130,7 +154,8 @@ class ChangeTools(CustomerTools):
         a read-only draft: no approval or list-completeness affirmation is needed
         to prepare it. Its successful result is ready for the Agent to explain
         and display directly; a second review_change read is not required.
-        Then obtain confirmation of the complete list and exact change before submit_change. Identity,
+        Then obtain confirmation of the complete list and exact change before
+        the matching operation-specific write tool. Identity,
         ownership, status, catalog, quantities and finances are checked here.
         A changed quote supersedes an unattempted proposal for the same target.
         Reading the same unchanged quote preserves its ID and approval context.
@@ -195,7 +220,8 @@ class ChangeTools(CustomerTools):
         if any(p["state"] in {"attempted", "pending", "unknown"} and p["facts"]["order_id"] == facts["order_id"] for p in self._proposals.values()):
             raise ReadError("unresolved_write_requires_inspection_no_new_write")
         for previous in self._proposals.values():
-            if (previous["state"] == "prepared" and previous["parameters"] == parameters
+            if (previous["state"] == "prepared" and previous["facts"]["kind"] == facts["kind"]
+                    and equivalent_change_parameters(facts["kind"], previous["parameters"], parameters)
                     and execution_evidence(previous["facts"]) == execution_evidence(facts)):
                 return previous
         identifier = f"proposal-{len(self._proposals) + 1}"
@@ -232,7 +258,7 @@ class ChangeTools(CustomerTools):
                 raise ReadError("missing_submission_request_reference")
             if request_id in self._submissions:
                 proposal = self._proposal(self._submissions[request_id])
-                if proposal["facts"]["kind"] != kind or proposal["parameters"] != parameters:
+                if proposal["facts"]["kind"] != kind or not equivalent_change_parameters(kind, proposal["parameters"], parameters):
                     raise ReadError("submission_reference_reused_for_different_change")
                 return deepcopy(proposal.get("outcome", {"proposal_id": proposal["proposal_id"], "state": proposal["state"]}))
             facts = prepare(ObservedFacts(self), kind, deepcopy(parameters))
@@ -276,7 +302,7 @@ class ChangeTools(CustomerTools):
                 reference = references[(row["kind"], row["parameters"].get("order_id"))]
                 if reference in self._submissions:
                     proposal = self._proposal(self._submissions[reference])
-                    if proposal["facts"]["kind"] != row["kind"] or proposal["parameters"] != row["parameters"]:
+                    if proposal["facts"]["kind"] != row["kind"] or not equivalent_change_parameters(row["kind"], proposal["parameters"], row["parameters"]):
                         raise ReadError("submission_reference_reused_for_different_change")
                     continue
                 prepare(ObservedFacts(self), row["kind"], deepcopy(row["parameters"]))
@@ -298,6 +324,49 @@ class ChangeTools(CustomerTools):
                     break
             return {"results": results, "remaining": len(ordered) - len(results),
                     "notice": "Separate actual outcomes; no cross-operation atomicity or unreported success."}
+
+    @is_tool(ToolType.WRITE)
+    def update_default_address(self, address: Address, request_id: str = "") -> dict:
+        """Update ONLY the verified profile default to the complete address already recapped and clearly approved. Does not change any order. request_id is bound by the Agent."""
+        return self.submit_change("default_address", {"address": address}, request_id)
+
+    @is_tool(ToolType.WRITE)
+    def update_order_address(self, order_id: str, address: Address, request_id: str = "") -> dict:
+        """Update ONLY this owned pending order to the complete address already recapped and clearly approved. Keep unchanged address fields. Does not change the profile or other orders. request_id is bound by the Agent."""
+        return self.submit_change("order_address", {"order_id": order_id, "address": address}, request_id)
+
+    @is_tool(ToolType.WRITE)
+    def cancel_order(self, order_id: str, reason: Literal["no longer needed", "ordered by mistake"], request_id: str = "") -> dict:
+        """Cancel the WHOLE owned pending order after its full recap and clear approval. Refund original charges to their original methods. No partial cancellation. request_id is bound by the Agent."""
+        return self.submit_change("cancel", {"order_id": order_id, "reason": reason}, request_id)
+
+    @is_tool(ToolType.WRITE)
+    def change_order_payment(self, order_id: str, payment_method_id: str, request_id: str = "") -> dict:
+        """Replace the full pending-order charge using one different saved method, after recap and approval. Gift balance must cover the full charge. Original charge is refunded; a decline preserves the original. request_id is bound by the Agent."""
+        return self.submit_change("payment", {"order_id": order_id, "payment_method_id": payment_method_id}, request_id)
+
+    @is_tool(ToolType.WRITE)
+    def modify_order_items(self, order_id: str, replacements: list[ReplacementChoice], payment_method_id: str,
+                           preserve_options: list[str] | None = None, specific_instance: bool = False, request_id: str = "") -> dict:
+        """Modify the COMPLETE approved pending-order item list once, using available same-product variants and one saved settlement method. Preserve ordered duplicate occurrences and per-row unchanged options. request_id is bound by the Agent."""
+        return self.submit_change("modify_items", {"order_id": order_id, "replacements": replacements,
+            "payment_method_id": payment_method_id, "preserve_options": preserve_options or [],
+            "specific_instance": specific_instance}, request_id)
+
+    @is_tool(ToolType.WRITE)
+    def request_return(self, order_id: str, item_ids: list[str], refund_payment_method_id: str,
+                       specific_instance: bool = False, request_id: str = "") -> dict:
+        """Register the COMPLETE approved return list for an owned delivered order once. Refund to an original method or eligible preexisting gift card; no card/PayPal cross-routing. Keep duplicate item IDs. Acceptance is not refund arrival. request_id is bound by the Agent."""
+        return self.submit_change("return", {"order_id": order_id, "item_ids": item_ids,
+            "refund_payment_method_id": refund_payment_method_id, "specific_instance": specific_instance}, request_id)
+
+    @is_tool(ToolType.WRITE)
+    def request_exchange(self, order_id: str, replacements: list[ReplacementChoice], payment_method_id: str,
+                         preserve_options: list[str] | None = None, specific_instance: bool = False, request_id: str = "") -> dict:
+        """Register the COMPLETE approved delivered-order exchange once. Use available same-product replacements, including an identical variant, and one saved method for the difference. Keep ordered duplicates and per-row constraints. Acceptance is not settlement or shipment. request_id is bound by the Agent."""
+        return self.submit_change("exchange", {"order_id": order_id, "replacements": replacements,
+            "payment_method_id": payment_method_id, "preserve_options": preserve_options or [],
+            "specific_instance": specific_instance}, request_id)
 
     def _proposal(self, identifier):
         self._customer_id()

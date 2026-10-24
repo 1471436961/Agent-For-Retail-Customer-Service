@@ -362,8 +362,17 @@ class ReadScopeTests(unittest.TestCase):
         self.assertTrue(all(tools[name].info["tool_type"] == "read" for name in READ_ACTION_NAMES))
         for name, tool in tools.items():
             if tool.info["tool_type"] == "write":
-                expected = ({"kind", "parameters", "request_id"} if name == "submit_change" else
-                            {"requests"} if name == "submit_changes" else {"proposal_id"})
+                explicit = {
+                    "update_default_address":{"address","request_id"},
+                    "update_order_address":{"order_id","address","request_id"},
+                    "cancel_order":{"order_id","reason","request_id"},
+                    "change_order_payment":{"order_id","payment_method_id","request_id"},
+                    "request_return":{"order_id","item_ids","refund_payment_method_id","specific_instance","request_id"},
+                    "modify_order_items":{"order_id","replacements","payment_method_id","preserve_options","specific_instance","request_id"},
+                    "request_exchange":{"order_id","replacements","payment_method_id","preserve_options","specific_instance","request_id"},
+                }
+                expected = explicit.get(name, {"kind", "parameters", "request_id"} if name == "submit_change" else
+                                        {"requests"} if name == "submit_changes" else {"proposal_id"})
                 self.assertEqual(set(tool.params.model_json_schema()["properties"]), expected)
         for name in ("get_customer_summary", "list_customer_orders", "get_owned_order"):
             self.assertNotIn("customer_id", tools[name].params.model_json_schema()["properties"])
@@ -456,7 +465,8 @@ class ReadScopeTests(unittest.TestCase):
             ToolCall(id="read", name="get_customer_summary", arguments={}),
         ])):
             reply, state = agent.generate_next_message(UserMessage(role="user", content="Verify and read my account."), agent.get_init_state())
-        self.assertEqual(state["halt_reason"], "invalid_model_reply")
+        self.assertIsNone(state["halt_reason"])
+        self.assertIsNotNone(state["protocol_diagnostic"])
         self.assertFalse(reply.tool_calls)
         self.assertEqual(self.backend.calls, [])
 

@@ -52,7 +52,9 @@ class ProductionAgentTests(unittest.TestCase):
                 self.assertFalse(self.agent.is_stop(recap))
                 self.assertEqual(self.writes(),[])
                 actions={a.name for a in self.agent.gateway.live_actions}
-                self.assertIn("submit_change",actions)
+                expected_write = next(name for name,value in completion.DIRECT_WRITE_KINDS.items() if value == kind)
+                self.assertIn(expected_write,actions)
+                self.assertNotIn("submit_change",actions)
                 self.assertFalse(any(name.startswith("execute_") for name in actions))
                 self.assertFalse({"plan_changes","review_change","prepare_plan_step"}&actions)
                 receipt=self.result(self.decision(UserMessage(role="user",content="I approve those exact complete details. Submit now."),
@@ -87,24 +89,46 @@ class ProductionAgentTests(unittest.TestCase):
             response_content("###CONTINUE### A draft ###STOP###")
         self.assertFalse(output_was_truncated(AssistantMessage(role="assistant",content="It ends mid-sentence")))
 
-    def test_metadata_confirmed_truncation_is_repaired_before_display_or_dispatch(self):
-        for tool_call in (False, True):
-            with self.subTest(tool_call=tool_call):
-                self.build(compatibility=False)
-                incomplete = (AssistantMessage(role="assistant",tool_calls=[ToolCall(id="truncated-call",name="verify_customer",
-                    arguments={"email":self.case["email"],"claimed_customer_id":None})]) if tool_call else
-                    AssistantMessage(role="assistant",content="Here are your options: You would then"))
-                incomplete.raw_data={"choices":[{"finish_reason":"length"}]}
-                fixed=AssistantMessage(role="assistant",content="###CONTINUE### Please provide your email or full name and postal code.")
-                self.model.side_effect=[incomplete,fixed]
-                reply,self.state=self.agent.generate_next_message(UserMessage(role="user",content="Please help with my order."),self.state)
-                self.assertEqual(reply.content,"Please provide your email or full name and postal code.")
-                self.assertFalse(reply.tool_calls)
-                self.assertFalse(self.agent.is_stop(reply))
-                self.assertIsNone(self.state["halt_reason"])
-                self.assertEqual(self.state["model_calls"],2)
-                self.assertEqual(self.requests,[])
-                self.assertEqual(len(self.state["history"]),2)  # Unshown draft is not fabricated dialogue.
+    def test_metadata_confirmed_text_truncation_is_repaired_before_display(self):
+        self.build(compatibility=False)
+        incomplete=AssistantMessage(role="assistant",content="Here are your options: You would then",
+            raw_data={"choices":[{"finish_reason":"length"}]})
+        fixed=AssistantMessage(role="assistant",content="Please provide your email or full name and postal code.")
+        self.model.side_effect=[incomplete,fixed]
+        reply,self.state=self.agent.generate_next_message(UserMessage(role="user",content="Please help with my order."),self.state)
+        self.assertEqual(reply.content,fixed.content)
+        self.assertFalse(reply.tool_calls)
+        self.assertIsNone(self.state["halt_reason"])
+        self.assertEqual(self.state["model_calls"],2)
+        self.assertEqual(self.requests,[])
+        self.assertEqual(len(self.state["history"]),2)
+
+    def test_complete_validated_call_is_not_discarded_only_for_length_metadata(self):
+        self.build(compatibility=False)
+        complete=AssistantMessage(role="assistant",tool_calls=[ToolCall(id="complete-at-boundary",name="verify_customer",
+            arguments={"email":self.case["email"],"claimed_customer_id":None})],
+            raw_data={"choices":[{"finish_reason":"length"}]})
+        self.model.side_effect=[complete]
+        reply,self.state=self.agent.generate_next_message(UserMessage(role="user",content="My email is "+self.case["email"]),self.state)
+        self.assertEqual(reply.tool_calls[0].name,"verify_customer")
+        self.assertEqual(self.state["model_calls"],1)
+        self.assertEqual(json.loads(self.result(reply).content)["customer_id"],self.case["customer_id"])
+
+    def test_two_truncated_drafts_do_not_permanently_lock_verified_customer(self):
+        incoming=self.read_request("order_address")
+        truncated=AssistantMessage(role="assistant",content="The details are",
+            raw_data={"choices":[{"finish_reason":"length"}]})
+        self.model.side_effect=[truncated,truncated]
+        failed,self.state=self.agent.generate_next_message(incoming,self.state)
+        self.assertFalse(failed.tool_calls)
+        self.assertIsNone(self.state["halt_reason"])
+        self.assertIn("truncation",self.state["protocol_diagnostic"])
+        self.model.side_effect=None
+        reply=self.decision(UserMessage(role="user",content="Continue with the same verified order, please."),
+            text="I have the verified order. Which address field should change?")
+        self.assertEqual(reply.content,"I have the verified order. Which address field should change?")
+        self.assertIsNone(self.state["protocol_diagnostic"])
+        self.assertEqual(len([r for r in self.requests if r["path"]=="/v1/customers/search"]),1)
 
     def test_receipt_reply_uses_one_decision_and_leaves_the_customer_turn_open(self):
         incoming=self.read_request("exchange")
@@ -229,7 +253,8 @@ class ProductionAgentTests(unittest.TestCase):
             index=self.model.call_count-1
             choice=calls[index]
             if choice:
-                return AssistantMessage(role="assistant",tool_calls=[ToolCall(id=f"native-{index}",name=choice[0],arguments=choice[1])])
+                name,args=completion.live_call(self.agent,choice[0],choice[1])
+                return AssistantMessage(role="assistant",tool_calls=[ToolCall(id=f"native-{index}",name=name,arguments=args)])
             actual=json.loads(kwargs["messages"][-1].content)["result"]
             if index==3:
                 return AssistantMessage(role="assistant",content="The complete exchange is "+json.dumps(actual["body"])+" with calculations "+json.dumps(actual["calculations"])+". Do you approve this full submission?")

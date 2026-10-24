@@ -2,7 +2,7 @@
 
 from typing import Literal
 import json
-from support_agent.adapters.change_tools import EXECUTE_ACTIONS, DIRECT_ACTION, BATCH_DIRECT_ACTION
+from support_agent.adapters.change_tools import EXECUTE_ACTIONS, DIRECT_ACTION, BATCH_DIRECT_ACTION, DIRECT_WRITE_KINDS, write_arguments
 from support_agent.adapters.conversation_api import TRANSFER_NOTICE
 from support_agent.domain.gateway_failure import GatewayDiagnostic
 from support_agent.adapters.change_parameters import validate_change_shape
@@ -91,13 +91,14 @@ def bind_submission_reference(state, reply):
                     row["request_id"] = submission_reference(state, row.get("kind"), target)
                 rows.append(row)
             call = call.model_copy(update={"arguments": {**call.arguments, "requests": rows}})
-        elif call.name == DIRECT_ACTION:
+        elif call.name == DIRECT_ACTION or call.name in DIRECT_WRITE_KINDS:
             arguments = dict(call.arguments)
-            params = arguments.get("parameters")
+            selected = write_arguments(call.name, arguments)
+            params = selected.get("parameters")
             target = params.get("order_id") if isinstance(params, dict) else None
-            if arguments.get("kind") == "default_address":
+            if selected.get("kind") == "default_address":
                 target = state.verified_customer_id
-            arguments["request_id"] = submission_reference(state, arguments.get("kind"), target)
+            arguments["request_id"] = submission_reference(state, selected.get("kind"), target)
             call = call.model_copy(update={"arguments": arguments})
         calls.append(call)
     return reply.model_copy(update={"tool_calls": calls})
@@ -246,8 +247,8 @@ def receive(state, message):
                         "state": body.get("state", "unknown"), "proposal_id": identifier}
                 if isinstance(body.get("customer_facts"), dict):
                     state.receipt_facts_to_display.append(body["customer_facts"])
-            elif call["name"] == DIRECT_ACTION:
-                _record_submission(state, call["arguments"], body)
+            elif call["name"] == DIRECT_ACTION or call["name"] in DIRECT_WRITE_KINDS:
+                _record_submission(state, write_arguments(call["name"], call["arguments"]), body)
             elif call["name"] == BATCH_DIRECT_ACTION:
                 pending = {row["request_id"]: row for row in call["arguments"]["requests"]}
                 for row in body.get("results", []):
@@ -321,9 +322,9 @@ def record_reply(state, reply, actions, *, live=False):
         properties = tool.params.model_json_schema().get("properties", {})
         if set(call.arguments) - set(properties):
             raise ProtocolError("Unexpected tool argument")
-        if live and call.name in {"prepare_change", DIRECT_ACTION, "prepare_changes", BATCH_DIRECT_ACTION}:
+        if live and call.name in {"prepare_change", DIRECT_ACTION, "prepare_changes", BATCH_DIRECT_ACTION, *DIRECT_WRITE_KINDS}:
             try:
-                rows = call.arguments.get("requests", []) if call.name in {"prepare_changes", BATCH_DIRECT_ACTION} else [call.arguments]
+                rows = call.arguments.get("requests", []) if call.name in {"prepare_changes", BATCH_DIRECT_ACTION} else [write_arguments(call.name, call.arguments)]
                 for row in rows:
                     if isinstance(row, dict):
                         validate_change_shape(row.get("kind"), row.get("parameters"))
@@ -340,15 +341,15 @@ def record_reply(state, reply, actions, *, live=False):
     if len(calls) > 1 and any(call.name in {"verify_customer", "lookup_customer"} for call in calls):
         # Verification changes toolkit identity; dependent reads wait for its result.
         raise ProtocolError("Verification must use its own tool batch")
-    exclusive = {"prepare_change", "prepare_changes", "review_change", "invalidate_change", "plan_changes", "prepare_plan_step", "abandon_plan", "inspect_change_result", "transfer_to_human", DIRECT_ACTION, BATCH_DIRECT_ACTION, *EXECUTE_ACTIONS}
+    exclusive = {"prepare_change", "prepare_changes", "review_change", "invalidate_change", "plan_changes", "prepare_plan_step", "abandon_plan", "inspect_change_result", "transfer_to_human", DIRECT_ACTION, BATCH_DIRECT_ACTION, *EXECUTE_ACTIONS, *DIRECT_WRITE_KINDS}
     if len(calls) > 1 and any(call.name in exclusive for call in calls):
         raise ProtocolError("State-changing or dependent actions require a single-call batch")
     for call in calls:
         if state.handoff in {"accepted", "unknown"}:
             raise ProtocolError("Terminal handoff forbids further tool calls")
-        if call.name in {DIRECT_ACTION, BATCH_DIRECT_ACTION} and not has_prior_assistant_turn(state):
+        if call.name in {DIRECT_ACTION, BATCH_DIRECT_ACTION, *DIRECT_WRITE_KINDS} and not has_prior_assistant_turn(state):
             raise ProtocolError("A submitted change needs an earlier assistant response and later customer input; the model must establish the exact recap and consent")
-        if call.name in {DIRECT_ACTION, BATCH_DIRECT_ACTION}:
+        if call.name in {DIRECT_ACTION, BATCH_DIRECT_ACTION, *DIRECT_WRITE_KINDS}:
             rows = call.arguments["requests"] if call.name == BATCH_DIRECT_ACTION else [call.arguments]
             for row in rows:
                 previous = state.submissions.get(row.get("request_id"), {})

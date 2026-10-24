@@ -72,6 +72,71 @@ class ServiceContinuityTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             PlanRequest.model_validate({"kind":"order_address","parameters":wrong})
 
+    def test_specific_address_schema_and_resume_after_two_invalid_drafts(self):
+        received = self.verify("order_address")
+        actual = next(action for action in self.agent.gateway.live_actions if action.name == "update_order_address")
+        self.assertEqual(set(actual.params.model_fields),{"order_id","address","request_id"})
+        self.assertNotIn("parameters",actual.params.model_fields)
+        self.decision(received,text="Update only this order to "+json.dumps(self.params["address"])+". Do you approve this complete address change?")
+        wrong = AssistantMessage(role="assistant",tool_calls=[ToolCall(id="missing-address",name="update_order_address",
+            arguments={"order_id":self.case["order_id"]})])
+        self.model.side_effect=[wrong,wrong]
+        rejected,self.state = self.agent.generate_next_message(UserMessage(role="user",content="Yes, I approve that exact address; update it."),self.state)
+        self.assertFalse(rejected.tool_calls)
+        self.assertIsNone(self.state["halt_reason"])
+        self.assertEqual(self.writes(),[])
+        self.model.side_effect=None
+        call = self.decision(UserMessage(role="user",content="Continue with the same approved order address."),
+            "update_order_address",self.params)
+        receipt=self.result(call)
+        self.assertEqual(json.loads(receipt.content)["state"],"completed")
+        self.assertEqual(len(self.writes()),1)
+        self.assertEqual(self.writes()[0]["body"],self.params["address"])
+        self.assertEqual(len([r for r in self.requests if r["path"]=="/v1/customers/search"]),1)
+
+    def test_complete_write_with_length_metadata_still_passes_full_preflight_once(self):
+        received=self.verify("order_address")
+        self.decision(received,text="Update only this order to "+json.dumps(self.params["address"])+". Approve this exact change?")
+        self.model.side_effect=[AssistantMessage(role="assistant",tool_calls=[ToolCall(id="valid-write-at-limit",name="update_order_address",arguments=self.params)],
+            raw_data={"choices":[{"finish_reason":"length"}]})]
+        call,self.state=self.agent.generate_next_message(UserMessage(role="user",content="Yes, submit that exact full address update."),self.state)
+        receipt=self.result(call)
+        self.assertEqual(json.loads(receipt.content)["state"],"completed")
+        self.assertEqual(len(self.writes()),1)
+
+    def test_typed_write_reuses_quote_and_batch_replay_without_reposting(self):
+        received = self.verify("return")
+        quoted = self.result(self.decision(received,"prepare_change",{"kind":"return","parameters":self.params}))
+        proposal_id = json.loads(quoted.content)["proposal_id"]
+        self.decision(quoted,text="Return exactly these recorded items to their original method. Do you approve this complete request?")
+        call = self.decision(UserMessage(role="user",content="I approve that exact complete return. Submit it."),
+                             "request_return",self.params)
+        receipt = self.result(call)
+        outcome = json.loads(receipt.content)
+        self.assertEqual(outcome["proposal_id"],proposal_id)
+        row = {"kind":"return","parameters":deepcopy(self.params),
+               "request_id":call.tool_calls[0].arguments["request_id"]}
+        before = len(self.requests)
+        replay = self.kit.submit_changes([row])
+        self.assertEqual(json.loads(self.host.to_json_str(replay))["results"][0]["outcome"],outcome)
+        self.assertEqual(len(self.requests),before)
+        self.assertEqual(len(self.writes()),1)
+        row["parameters"]["specific_instance"] = True
+        with self.assertRaisesRegex(ReadError,"submission_reference_reused_for_different_change"):
+            self.kit.submit_changes([row])
+        self.assertEqual(len(self.requests),before)
+
+    def test_malformed_generation_is_corrected_without_a_permanent_gateway_lock(self):
+        received=self.verify("order_address")
+        self.model.side_effect=[json.JSONDecodeError("Malformed function arguments","{",1),
+            AssistantMessage(role="assistant",content="I have the verified order. What address field should change?")]
+        reply,self.state=self.agent.generate_next_message(received,self.state)
+        self.assertFalse(reply.tool_calls)
+        self.assertIsNone(self.state["halt_reason"])
+        self.assertIsNone(self.state["protocol_diagnostic"])
+        self.assertIsNone(self.state["gateway_diagnostic"])
+        self.assertEqual(self.writes(),[])
+
     def test_historical_rejected_shape_is_preserved_without_reexecution(self):
         received = self.verify("order_address")
         self.decision(received,text="Which order address field should change?")
@@ -247,7 +312,8 @@ class ServiceContinuityTests(unittest.TestCase):
         def provider(**kwargs):
             choice = schedule[self.model.call_count-1]
             if isinstance(choice,tuple):
-                return AssistantMessage(role="assistant",tool_calls=[ToolCall(id=f"continuity-{self.model.call_count}",name=choice[0],arguments=deepcopy(choice[1]))])
+                name,args = completion.live_call(self.agent,choice[0],choice[1])
+                return AssistantMessage(role="assistant",tool_calls=[ToolCall(id=f"continuity-{self.model.call_count}",name=name,arguments=args)])
             if choice == "review-both":
                 text = "Change only the profile default and this pending order to "+json.dumps(self.params["address"])+". Do you approve both?"
             elif choice == "review-restore":
@@ -258,11 +324,12 @@ class ServiceContinuityTests(unittest.TestCase):
         self.model.side_effect = provider
         task = Task(id="synthetic-address-follow-up",user_scenario=UserScenario(instructions="Synthetic record changes and a later correction"))
         simulation = Orchestrator(domain="retail_plus",agent=self.agent,user=Customer(),environment=self.host,task=task,
-                                  validate_communication=True).run()
+                                  max_steps=16,validate_communication=True).run()
         self.assertEqual(simulation.termination_reason.value,"user_stop")
+        self.assertLessEqual(len(simulation.messages),16)
         self.assertEqual(len(self.writes()),3)
         calls = [call.name for message in simulation.messages for call in (getattr(message,"tool_calls",None) or [])]
-        self.assertEqual(calls,["verify_customer","submit_changes","submit_change"])
+        self.assertEqual(calls,["verify_customer","submit_changes","update_default_address"])
         self.assertEqual(self.kit.get_customer_summary()["default_shipping_address"],original_profile)
         order = db.orders[self.case["order_id"]].model_dump()
         self.assertNotEqual(order["address"],original_order["address"])

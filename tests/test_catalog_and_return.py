@@ -12,6 +12,7 @@ from tau2.hyper.client_api import ClientAPI, ClientAPIContext
 from fixtures.p2_backend import SyntheticBackend
 from test_reference_runtime import ROOT, SEED, apply_native_reference, reference_kit
 from test_async_operations import async_kit
+from test_task_completion import live_call
 
 
 class CatalogAndReturnTests(unittest.TestCase):
@@ -54,6 +55,8 @@ class CatalogAndReturnTests(unittest.TestCase):
             def decision(name=None, args=None, text=None):
                 nonlocal state, sequence
                 sequence += 1
+                if name:
+                    name, args = live_call(agent, name, args)
                 model.return_value = (AssistantMessage(role="assistant", content=text) if name is None else
                     AssistantMessage(role="assistant", tool_calls=[ToolCall(id=f"mixed-{sequence}", name=name, arguments=args)]))
                 reply, state = agent.generate_next_message(received, state)

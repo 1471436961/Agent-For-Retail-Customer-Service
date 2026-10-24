@@ -2,7 +2,7 @@
 
 from typing import Literal
 import json
-from support_agent.adapters.change_tools import EXECUTE_ACTIONS
+from support_agent.adapters.change_tools import EXECUTE_ACTIONS, DIRECT_ACTION
 from support_agent.adapters.conversation_api import TRANSFER_NOTICE
 from support_agent.domain.gateway_failure import GatewayDiagnostic
 from support_agent.domain.presentation import review_text, legacy_review_text
@@ -45,6 +45,7 @@ class SessionState(BaseModel):
     user_turn: int = 0
     handoff: str | None = None
     receipt_facts_to_display: list[dict] = Field(default_factory=list)
+    submissions: dict[str, dict] = Field(default_factory=dict)
 
 
 def initial_state() -> SessionState:
@@ -60,6 +61,37 @@ def decode(message):
 
 def store(state, message):
     state.history.append(message.model_dump(mode="json", exclude_none=True))
+
+
+def has_prior_recap_turn(state):
+    """Structural evidence only; the model judges recap completeness and consent."""
+    customer = next((index for index in range(len(state.history) - 1, -1, -1)
+                     if state.history[index]["role"] == "user"), None)
+    return customer is not None and any(
+        row["role"] == "assistant" and row.get("content") and not row.get("tool_calls")
+        for row in state.history[:customer])
+
+
+def bind_submission_reference(state, reply):
+    """Bind replay identity to a real user turn/operation/target, not model wording."""
+    if not isinstance(reply, AssistantMessage) or not reply.tool_calls:
+        return reply
+    calls = []
+    for call in reply.tool_calls:
+        if call.name == DIRECT_ACTION:
+            arguments = dict(call.arguments)
+            params = arguments.get("parameters")
+            target = params.get("order_id") if isinstance(params, dict) else None
+            if arguments.get("kind") == "default_address":
+                target = state.verified_customer_id
+            arguments["request_id"] = submission_reference(state, arguments.get("kind"), target)
+            call = call.model_copy(update={"arguments": arguments})
+        calls.append(call)
+    return reply.model_copy(update={"tool_calls": calls})
+
+
+def submission_reference(state, kind, target):
+    return json.dumps([state.user_turn, kind, target], separators=(",", ":"))
 
 
 def pending_reviews(state):
@@ -162,8 +194,28 @@ def receive(state, message):
                 state.reviewed.pop(identifier, None)
                 if identifier in state.proposals:
                     state.proposals[identifier]["state"] = body.get("state", "unknown")
+                    facts = state.proposals[identifier]["facts"]
+                    target = facts["order_id"] if facts["kind"] != "default_address" else state.verified_customer_id
+                    state.submissions[submission_reference(state, facts["kind"], target)] = {
+                        "kind": facts["kind"], "order_id": facts["order_id"],
+                        "state": body.get("state", "unknown"), "proposal_id": identifier}
                 if isinstance(body.get("customer_facts"), dict):
                     state.receipt_facts_to_display.append(body["customer_facts"])
+            elif call["name"] == DIRECT_ACTION:
+                identifier = call["arguments"]["request_id"]
+                state.submissions[identifier] = {"kind": call["arguments"]["kind"],
+                    "order_id": call["arguments"]["parameters"].get("order_id"),
+                    "state": body.get("state", "unknown"), "proposal_id": body.get("proposal_id")}
+                if isinstance(body.get("customer_facts"), dict):
+                    state.receipt_facts_to_display.append(body["customer_facts"])
+                # A direct submission supersedes the unattempted draft of the
+                # same target in the toolkit; do not subsequently display it.
+                for proposal_id, proposal in state.proposals.items():
+                    if proposal["facts"]["order_id"] == state.submissions[identifier]["order_id"] and proposal["state"] == "prepared":
+                        proposal["state"] = "superseded"
+                        state.reviewed.pop(proposal_id, None)
+                if state.review_to_display and state.review_to_display["facts"]["order_id"] == state.submissions[identifier]["order_id"]:
+                    state.review_to_display = None
             elif call["name"] in {"abandon_plan", "transfer_to_human"}:
                 if call["name"] == "abandon_plan":
                     ids = {step.get("proposal_id") for step in body.get("steps", []) if step.get("state") == "paused"}
@@ -211,12 +263,18 @@ def record_reply(state, reply, actions, *, live=False):
     if len(calls) > 1 and any(call.name in {"verify_customer", "lookup_customer"} for call in calls):
         # Verification changes toolkit identity; dependent reads wait for its result.
         raise ProtocolError("Verification must use its own tool batch")
-    exclusive = {"prepare_change", "review_change", "invalidate_change", "plan_changes", "prepare_plan_step", "abandon_plan", "inspect_change_result", "transfer_to_human", *EXECUTE_ACTIONS}
+    exclusive = {"prepare_change", "review_change", "invalidate_change", "plan_changes", "prepare_plan_step", "abandon_plan", "inspect_change_result", "transfer_to_human", DIRECT_ACTION, *EXECUTE_ACTIONS}
     if len(calls) > 1 and any(call.name in exclusive for call in calls):
         raise ProtocolError("State-changing or dependent actions require a single-call batch")
     for call in calls:
         if state.handoff in {"accepted", "unknown"}:
             raise ProtocolError("Terminal handoff forbids further tool calls")
+        if call.name == DIRECT_ACTION and not has_prior_recap_turn(state):
+            raise ProtocolError("A submitted change needs an actual earlier assistant recap and later customer input")
+        if call.name == DIRECT_ACTION:
+            previous = state.submissions.get(call.arguments.get("request_id"), {})
+            if previous.get("state") in {"accepted", "completed", "attempted", "unknown"}:
+                raise ProtocolError("This operation already has an actual write outcome for this customer turn. Report its receipt; do not submit it again through another tool")
         if call.name in EXECUTE_ACTIONS:
             identifier = call.arguments.get("proposal_id")
             proposal = state.proposals.get(identifier)

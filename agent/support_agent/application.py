@@ -3,7 +3,7 @@
 from support_agent.gateway import GatewayAdapter
 from support_agent.prompts import IDENTITY_PROMPT, SYSTEM_PROMPT
 from support_agent.state import (
-    ProtocolError, SessionState, initial_state, receive, record_reply, restore_history, pending_reviews, review_bundle_text, receipt_text, store, normalize_call_ids,
+    ProtocolError, SessionState, initial_state, receive, record_reply, restore_history, pending_reviews, review_bundle_text, receipt_text, store, normalize_call_ids, bind_submission_reference,
 )
 from tau2.data_model.message import AssistantMessage, SystemMessage
 from support_agent.adapters.conversation_api import TRANSFER_NOTICE
@@ -52,6 +52,8 @@ class RetailAgent:
                             for identifier, p in current.proposals.items()]
                 prompt += "\nTrusted conversation progress (not customer consent): " + json.dumps(
                     {"user_turn": current.user_turn, "changes": progress})
+            if current.submissions:
+                prompt += "\nActual submitted-change outcomes: " + json.dumps(list(current.submissions.values()))
             if current.review_to_display:
                 prompt += ("\nA complete verified proposal is ready to display. Answer the customer's "
                            "outstanding questions using the policy and actual tool results, and explain the "
@@ -79,6 +81,7 @@ class RetailAgent:
                 return self._stop(current, "gateway_failure")
             try:
                 reply = normalize_call_ids(current, reply)
+                reply = bind_submission_reference(current, reply)
                 if isinstance(reply, AssistantMessage) and reply.tool_calls and reply.content:
                     reply = reply.model_copy(update={"content": None})
                 if (isinstance(reply, AssistantMessage) and reply.tool_calls and
@@ -111,7 +114,9 @@ class RetailAgent:
                         content="Your proposed reply was rejected before any tool was executed: " + str(error) +
                         ". Return a corrected reply using the supplied schemas and actual history. "
                         "Retail policy permits exactly one tool call at a time, followed by its actual result. "
-                        "A write still requires the exact displayed proposal and later clear customer approval. "
+                        "A write requires a complete real recap and later clear customer approval. "
+                        "Use submit_change when the customer already approved a natural-language recap; "
+                        "an internal prepared proposal is not a business requirement. "
                         "If approval or information is missing, ask the customer. No rejected call has taken effect.")]
                     continue
                 return self._stop(current, "invalid_model_reply")

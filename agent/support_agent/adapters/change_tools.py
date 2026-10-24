@@ -13,13 +13,15 @@ from support_agent.domain.plans import order_requests
 from support_agent.domain.receipts import customer_facts
 from support_agent.adapters.change_parameters import ChangeParameters, PlanRequest
 from support_agent.domain.policy import service_policy
+from support_agent.domain.observations import ObservedFacts
 
 PREPARATION_ACTION_NAMES = ("compare_variants", "calculate", "get_service_policy", "prepare_change")
 REVIEW_ACTION_NAMES = ("review_change", "invalidate_change")
 PLAN_ACTION_NAMES = ("plan_changes", "prepare_plan_step", "abandon_plan", "get_service_status", "inspect_change_result", "transfer_to_human")
 EXECUTE_ACTIONS = {"execute_default_address": "default_address", "execute_order_address": "order_address", "execute_cancellation": "cancel",
                    "execute_payment": "payment", "execute_item_modification": "modify_items", "execute_return": "return", "execute_exchange": "exchange"}
-ACTION_NAMES = (*READ_ACTION_NAMES, *PREPARATION_ACTION_NAMES, *REVIEW_ACTION_NAMES, *PLAN_ACTION_NAMES, *EXECUTE_ACTIONS)
+DIRECT_ACTION = "submit_change"
+ACTION_NAMES = (*READ_ACTION_NAMES, *PREPARATION_ACTION_NAMES, *REVIEW_ACTION_NAMES, *PLAN_ACTION_NAMES, *EXECUTE_ACTIONS, DIRECT_ACTION)
 
 
 class ChangeTools(CustomerTools):
@@ -31,6 +33,7 @@ class ChangeTools(CustomerTools):
         self._human_requested = False
         self._transfer_outcome = None
         self._inspections = {}
+        self._submissions = {}
 
     def _sync_session(self):
         previous = self._conversation_id
@@ -42,6 +45,7 @@ class ChangeTools(CustomerTools):
             self._human_requested = False
             self._transfer_outcome = None
             self._inspections = {}
+            self._submissions = {}
 
     def _assert_service_active(self):
         if self._transfer_outcome and self._transfer_outcome["state"] in {"accepted", "unknown"}:
@@ -121,14 +125,62 @@ class ChangeTools(CustomerTools):
             if any(p["state"] in {"attempted", "unknown"} and p["facts"]["order_id"] == target for p in self._proposals.values()):
                 raise ReadError("unresolved_write_requires_inspection_no_new_write")
             facts = prepare(self, kind, deepcopy(parameters))
-            identifier = f"proposal-{len(self._proposals) + 1}"
-            for previous in self._proposals.values():
-                if previous["state"] == "prepared" and previous["facts"]["order_id"] == facts["order_id"]:
-                    previous["state"] = "superseded"
-            proposal = {"proposal_id": identifier, "state": "prepared", "facts": facts,
-                        "parameters": deepcopy(parameters)}
-            self._proposals[identifier] = proposal
-            return deepcopy(proposal)
+            return deepcopy(self._new_proposal(facts, parameters))
+
+    def _new_proposal(self, facts, parameters):
+        if any(p["state"] in {"attempted", "unknown"} and p["facts"]["order_id"] == facts["order_id"] for p in self._proposals.values()):
+            raise ReadError("unresolved_write_requires_inspection_no_new_write")
+        identifier = f"proposal-{len(self._proposals) + 1}"
+        for previous in self._proposals.values():
+            if previous["state"] == "prepared" and previous["facts"]["order_id"] == facts["order_id"]:
+                previous["state"] = "superseded"
+        proposal = {"proposal_id": identifier, "state": "prepared", "facts": facts,
+                    "parameters": deepcopy(parameters)}
+        self._proposals[identifier] = proposal
+        return proposal
+
+    @is_tool(ToolType.WRITE)
+    def submit_change(self, kind: Literal["default_address", "order_address", "cancel", "payment", "modify_items", "return", "exchange"],
+                      parameters: ChangeParameters, request_id: str = "") -> dict:
+        """Actually submit a change the customer has already explicitly approved.
+
+        Use this WRITE after a genuine natural-language recap of the full change
+        and a later customer reply clearly approving those exact details. No
+        prepared proposal ID or second confirmation is required. A question,
+        conditional assent or request merely to check availability is not consent.
+        The model interprets that meaning; the program does not match phrases.
+        Parameters have the same seven-kind shapes as prepare_change. Prior
+        actual customer/order/catalog reads are required so details are grounded.
+        The toolkit freezes those reads, rechecks current facts, then makes one
+        real API write. Changed facts require a new recap and approval. Never use
+        this to bypass missing customer approval or to retry an unknown write.
+        request_id is filled by the Agent from the real customer turn and target;
+        it is local replay metadata, never a REST field or backend idempotency key.
+        """
+        with self._lock:
+            self._customer_id()
+            if not isinstance(request_id, str) or not request_id:
+                raise ReadError("missing_submission_request_reference")
+            if request_id in self._submissions:
+                proposal = self._proposal(self._submissions[request_id])
+                if proposal["facts"]["kind"] != kind or proposal["parameters"] != parameters:
+                    raise ReadError("submission_reference_reused_for_different_change")
+                return deepcopy(proposal.get("outcome", {"proposal_id": proposal["proposal_id"], "state": proposal["state"]}))
+            facts = prepare(ObservedFacts(self), kind, deepcopy(parameters))
+            proposal = self._new_proposal(facts, parameters)
+            self._submissions[request_id] = proposal["proposal_id"]
+            try:
+                return self._execute(proposal["proposal_id"], kind)
+            except ReadError as error:
+                # _execute raises ReadError only in preflight, before write_once.
+                # Preserve a definite non-write result for this request reference.
+                proposal["state"] = "failed"
+                outcome = {"proposal_id": proposal["proposal_id"], "state": "failed",
+                           "error": error.code, "customer_facts": {
+                               "kind": kind, "order_id": facts["order_id"], "state": "failed",
+                               "notice": "The change was not submitted. Recheck facts and obtain approval if the proposal changed."}}
+                proposal["outcome"] = outcome
+                return deepcopy(outcome)
 
     def _proposal(self, identifier):
         self._customer_id()
@@ -188,6 +240,13 @@ class ChangeTools(CustomerTools):
             outcome["customer_facts"] = customer_facts(proposal["facts"], outcome)
             proposal["outcome"] = {"proposal_id": proposal_id, **outcome}
             proposal["state"] = outcome["state"]
+            if outcome["state"] in {"completed", "accepted"}:
+                receipt = outcome["receipt"]
+                if kind == "default_address" and self._observed_profile:
+                    self._observed_profile["default_shipping_address"] = deepcopy(receipt["default_shipping_address"])
+                elif proposal["facts"]["order_id"] in self._observed_orders:
+                    observed = self._observed_orders[proposal["facts"]["order_id"]]
+                    observed.update({key: deepcopy(value) for key, value in receipt.items() if key != "order_id"})
             if "plan_id" in proposal:
                 step = self._plans[proposal["plan_id"]]["steps"][proposal["step_index"]]
                 step["state"] = outcome["state"]

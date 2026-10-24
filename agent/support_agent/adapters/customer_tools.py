@@ -1,6 +1,7 @@
 """Session-authorized tools; model-provided IDs never constitute authentication."""
 
 from threading import RLock
+from copy import deepcopy
 
 from tau2.environment.toolkit import ToolType, is_tool
 from tau2.hyper.client_api import ClientAPIToolKitBase
@@ -27,6 +28,9 @@ class CustomerTools(ClientAPIToolKitBase):
         self._identity = IdentityState()
         self._conversation_id = None
         self._lock = RLock()
+        self._observed_profile = None
+        self._observed_orders = {}
+        self._observed_products = {}
 
     def _sync_session(self):
         # The host creates a fresh toolkit for each trial. Ordinary customer
@@ -41,6 +45,9 @@ class CustomerTools(ClientAPIToolKitBase):
             conversation_id = None
         if self._conversation_id != conversation_id:
             self._identity = IdentityState()
+            self._observed_profile = None
+            self._observed_orders = {}
+            self._observed_products = {}
             self._conversation_id = conversation_id
 
     def _customer_id(self):
@@ -54,7 +61,9 @@ class CustomerTools(ClientAPIToolKitBase):
         """Extension hook for terminal handoff, without changing identity policy."""
 
     def _profile(self):
-        return read_customer(self.client_api, self._customer_id())
+        profile = read_customer(self.client_api, self._customer_id())
+        self._observed_profile = deepcopy(profile)
+        return profile
 
     @is_tool(ToolType.READ)
     def verify_customer(self, email: str = "", first_name: str = "", last_name: str = "",
@@ -142,6 +151,7 @@ class CustomerTools(ClientAPIToolKitBase):
                     if order["customer_id"] != self._customer_id():
                         raise ReadError("order_access_denied")
                     orders.append(order)
+                    self._observed_orders[identifier] = deepcopy(order)
                 result["orders"] = orders
             return result
 
@@ -164,6 +174,7 @@ class CustomerTools(ClientAPIToolKitBase):
             order = read_order(self.client_api, order_id)
             if order["customer_id"] != self._customer_id():
                 raise ReadError("order_access_denied")
+            self._observed_orders[order_id] = deepcopy(order)
             return order
 
     @is_tool(ToolType.READ)
@@ -186,7 +197,9 @@ class CustomerTools(ClientAPIToolKitBase):
         """
         with self._lock:
             self._customer_id()
-            return read_product(self.client_api, product_id)
+            product = read_product(self.client_api, product_id)
+            self._observed_products[product_id] = deepcopy(product)
+            return product
 
     @is_tool(ToolType.READ)
     def get_catalog_item(self, item_id: str) -> dict:
@@ -217,6 +230,7 @@ class CustomerTools(ClientAPIToolKitBase):
             if len(ids) != len(set(ids)):
                 raise ReadError("invalid_read_response", operation="listProducts")
             products = [read_product(self.client_api, product_id) for product_id in ids]
+            self._observed_products.update({product["product_id"]: deepcopy(product) for product in products})
             items = [item for product in products for item in product["items"]]
             return {"product_type_count": len(products), "variant_count": len(items),
                     "available_variant_count": sum(item["available"] for item in items),

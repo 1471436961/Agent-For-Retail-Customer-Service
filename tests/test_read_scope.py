@@ -359,7 +359,8 @@ class ReadScopeTests(unittest.TestCase):
         self.assertTrue(all(tools[name].info["tool_type"] == "read" for name in READ_ACTION_NAMES))
         for name, tool in tools.items():
             if tool.info["tool_type"] == "write":
-                self.assertEqual(set(tool.params.model_json_schema()["properties"]), {"proposal_id"})
+                expected = {"kind", "parameters", "request_id"} if name == "submit_change" else {"proposal_id"}
+                self.assertEqual(set(tool.params.model_json_schema()["properties"]), expected)
         for name in ("get_customer_summary", "list_customer_orders", "get_owned_order"):
             self.assertNotIn("customer_id", tools[name].params.model_json_schema()["properties"])
         self.verify()

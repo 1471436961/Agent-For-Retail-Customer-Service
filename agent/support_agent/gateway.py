@@ -8,8 +8,8 @@ import re
 from pydantic import Field, create_model
 
 from tau2.data_model.message import MultiToolMessage, ToolMessage
-from support_agent.state import decode
-from support_agent.adapters.change_tools import ACTION_NAMES, EXECUTE_ACTIONS
+from support_agent.state import decode, has_prior_recap_turn
+from support_agent.adapters.change_tools import ACTION_NAMES, EXECUTE_ACTIONS, DIRECT_ACTION
 from support_agent.config import PREFERRED_MODEL
 from support_agent.domain.presentation import proposal_view
 
@@ -95,7 +95,8 @@ class GatewayAdapter:
                            if proposal["state"] == "prepared" and identifier in state.reviewed
                            and state.user_turn > state.reviewed[identifier]}
             return tuple(action for action in self.live_actions
-                         if action.name not in EXECUTE_ACTIONS or EXECUTE_ACTIONS[action.name] in ready_kinds)
+                         if (action.name not in EXECUTE_ACTIONS or EXECUTE_ACTIONS[action.name] in ready_kinds)
+                         and (action.name != DIRECT_ACTION or has_prior_recap_turn(state)))
         return tuple(action for action in self.live_actions if action.name in {
             "verify_customer", "transfer_to_human",
         })

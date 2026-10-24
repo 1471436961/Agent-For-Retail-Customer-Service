@@ -12,7 +12,7 @@ import test_reference_runtime as reference
 from test_reference_runtime import ROOT, SEED, reference_kit, apply_native_reference
 from agent import create_agent
 from support_agent.domain.identity import ReadError
-from support_agent.domain.presentation import legacy_review_text
+from support_agent.domain.presentation import legacy_review_text, review_text
 from tau2.data_model.message import AssistantMessage, ToolCall, UserMessage
 from tau2.environment.environment import Environment
 from tau2.hyper.agent_context import activate_agent_context, build_agent_context
@@ -67,9 +67,9 @@ class TaskCompletionTests(unittest.TestCase):
                 prepared = self.prepare(kind)
                 self.assertEqual(json.loads(prepared.content)["state"], "prepared")
                 self.assertEqual(self.runtime.environment.get_db_hash(), before)
-                explanation = "Here is the requested proposal. I have not submitted it."
+                explanation = review_text(json.loads(prepared.content))
                 recap = self.decision(prepared, text=explanation)
-                self.assertTrue(recap.content.startswith(explanation))
+                self.assertEqual(recap.content, explanation)
                 self.assertIn("Please confirm", recap.content)
                 self.assertEqual(self.state["reviewed"], {"proposal-1": self.state["user_turn"]})
                 self.assertEqual(self.writes(), [])
@@ -107,7 +107,7 @@ class TaskCompletionTests(unittest.TestCase):
         prepared = self.prepare("exchange")
         self.model.side_effect = [
             AssistantMessage(role="assistant", tool_calls=[ToolCall(id="too-early", name="execute_exchange", arguments={"proposal_id": "proposal-1"})]),
-            AssistantMessage(role="assistant", content="Here are the proposal details for your approval."),
+            AssistantMessage(role="assistant", content=review_text(json.loads(prepared.content))),
         ]
         reply, self.state = self.agent.generate_next_message(prepared, self.state)
         self.assertFalse(reply.tool_calls)
@@ -202,9 +202,10 @@ class TaskCompletionTests(unittest.TestCase):
         order_params = {"order_id": self.case["order_id"], "address": address}
         prepared_order = self.result(self.decision(prepared_default, "prepare_change",
             {"kind": "order_address", "parameters": order_params}))
-        recap = self.decision(prepared_order, text="These are the two independent address changes you requested.")
-        self.assertIn("proposal-1", recap.content)
-        self.assertIn("proposal-2", recap.content)
+        summary = ("Apply this new address to your profile and the named pending order: "
+                   + json.dumps(address) + ". Do you approve both exact changes?")
+        recap = self.decision(prepared_order, text=summary)
+        self.assertEqual(recap.content, summary)
         self.assertEqual(set(self.state["reviewed"]), {"proposal-1", "proposal-2"})
         self.assertEqual(self.writes(), [])
         first = self.result(self.decision(UserMessage(role="user", content="I approve both displayed address changes. Apply both."),

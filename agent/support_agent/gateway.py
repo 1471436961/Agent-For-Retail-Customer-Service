@@ -87,9 +87,10 @@ class GatewayAdapter:
                 return tuple(action for action in self.live_actions if action.name in {
                     "get_customer_summary", "transfer_to_human",
                 })
-            # Advertise executors only for a genuinely displayed proposal and
-            # a later customer turn. The model still interprets whether that
-            # turn actually authorizes this exact change. Preparation remains
+            # Advertise executors after a genuine customer-facing quote
+            # response and later customer input. Chronology is not proof of
+            # complete disclosure or consent: the model judges both meanings.
+            # Preparation remains
             # available when the customer changes their request.
             ready_kinds = {proposal["facts"]["kind"] for identifier, proposal in state.proposals.items()
                            if proposal["state"] == "prepared" and identifier in state.reviewed

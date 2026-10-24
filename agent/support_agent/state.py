@@ -5,7 +5,6 @@ import json
 from support_agent.adapters.change_tools import EXECUTE_ACTIONS, DIRECT_ACTION
 from support_agent.adapters.conversation_api import TRANSFER_NOTICE
 from support_agent.domain.gateway_failure import GatewayDiagnostic
-from support_agent.domain.presentation import review_text, legacy_review_text
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from tau2.data_model.message import (
@@ -101,17 +100,6 @@ def pending_reviews(state):
             if proposal["state"] == "prepared" and identifier not in state.reviewed]
 
 
-def review_bundle_text(proposals):
-    if len(proposals) == 1:
-        return review_text(proposals[0])
-    # This combines trusted record presentations, not user-language parsing.
-    sections = [review_text(proposal).rsplit("\n", 1)[0] for proposal in proposals]
-    question = "Please confirm these exact changes."
-    if any(p["facts"]["kind"] in {"modify_items", "return", "exchange"} for p in proposals):
-        question += " Are these the complete item lists for the one-time requests?"
-    return "\n\n".join([*sections, question])
-
-
 def receive(state, message):
     """Associate every host result with the complete pending assistant batch."""
     message = decode(message)
@@ -167,6 +155,12 @@ def receive(state, message):
             elif call["name"] in {"prepare_change", "prepare_plan_step"} and body.get("state") == "prepared":
                 identifier = body.get("proposal_id")
                 if isinstance(identifier, str) and isinstance(body.get("facts"), dict):
+                    if state.proposals.get(identifier) == body:
+                        # An unchanged quote read does not reset the actual
+                        # earlier response or force another customer approval.
+                        if identifier not in state.reviewed:
+                            state.review_to_display = body
+                        continue
                     target = body["facts"].get("order_id")
                     for previous_id, previous in state.proposals.items():
                         if previous["facts"].get("order_id") == target and previous.get("state") == "prepared":
@@ -179,9 +173,13 @@ def receive(state, message):
             elif call["name"] == "review_change":
                 proposal = body.get("review")
                 identifier = call["arguments"].get("proposal_id")
-                state.reviewed.pop(identifier, None)
                 if proposal == state.proposals.get(identifier) and proposal and proposal.get("state") == "prepared":
-                    state.review_to_display = proposal
+                    if identifier not in state.reviewed:
+                        state.review_to_display = proposal
+                else:
+                    state.reviewed.pop(identifier, None)
+                    if state.review_to_display and state.review_to_display["proposal_id"] == identifier:
+                        state.review_to_display = None
             elif call["name"] == "invalidate_change":
                 identifier = call["arguments"].get("proposal_id")
                 state.reviewed.pop(identifier, None)
@@ -295,21 +293,13 @@ def record_reply(state, reply, actions, *, live=False):
         state.request_tool_rounds += 1
     if state.review_to_display and has_text and not calls:
         proposals = pending_reviews(state)
-        expected = review_bundle_text(proposals)
-        suffix = receipt_text(state.receipt_facts_to_display) if state.receipt_facts_to_display else ""
-        displayed = reply.content.endswith(expected + suffix)
-        if not live:
-            # An older trajectory may have displayed only the last proposal.
-            legacy = state.review_to_display
-            if not displayed and any(reply.content.endswith(text + suffix) for text in
-                                     (review_text(legacy), legacy_review_text(legacy))):
-                proposals, displayed = [legacy], True
-        if displayed:
-            for proposal in proposals:
-                state.reviewed[proposal["proposal_id"]] = state.user_turn
-            state.review_to_display = None
-        elif live:
-            raise ProtocolError("Review facts must actually be displayed")
+        # Chronology only: a genuine customer-facing response followed these
+        # quote results. The LLM must explain all relevant facts and judge later
+        # consent; matching a fixed footer cannot prove either meaning. Legacy
+        # recaps remain valid text during replay, without requiring that format.
+        for proposal in proposals:
+            state.reviewed[proposal["proposal_id"]] = state.user_turn
+        state.review_to_display = None
     if state.handoff == "accepted" and reply.content != TRANSFER_NOTICE:
         raise ProtocolError("Accepted handoff requires exact notice")
     if has_text and not calls and state.receipt_facts_to_display and state.handoff not in {"accepted", "unknown"}:

@@ -154,7 +154,8 @@ class ReferenceRuntimeTests(unittest.TestCase):
                         result = host.get_response(reply.tool_calls[0])
                         self.assertFalse(result.error, result.content)
                         incoming = MultiToolMessage(role="tool", tool_messages=[result])
-                    model.return_value = AssistantMessage(role="assistant", content="Here is the full proposal before submission.")
+                    from support_agent.domain.presentation import review_text
+                    model.return_value = AssistantMessage(role="assistant", content=review_text(json.loads(result.content)["review"]))
                     recap, state = agent.generate_next_message(incoming, state)
                     self.assertFalse(recap.tool_calls)
                     self.assertIn("Please confirm", recap.content)

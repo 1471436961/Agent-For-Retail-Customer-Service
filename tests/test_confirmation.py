@@ -9,6 +9,7 @@ from agent import create_agent
 from tools import Tools
 from fixtures.write_backend import WriteBackend
 from support_agent.domain.identity import ReadError
+from support_agent.domain.presentation import review_text
 from test_agent_protocol import call, calls_reply, text_reply, user, results, tool_result
 from tau2.hyper.agent_context import activate_agent_context, build_agent_context
 from tau2.hyper.client_api import ClientAPI, ClientAPIContext
@@ -43,7 +44,7 @@ class ConfirmationTests(unittest.TestCase):
         reply, self.state = self.agent.generate_next_message(message, self.state)
         return reply
 
-    def host(self, reply, final="Tool result received."):
+    def host(self, reply, final=None):
         self.assertTrue(reply.tool_calls, self.state)
         c = reply.tool_calls[0]
         try:
@@ -51,6 +52,11 @@ class ConfirmationTests(unittest.TestCase):
             content = json.dumps(out)
         except ReadError as exc:
             out, error, content = None, True, str(exc)
+        if final is None:
+            proposal = out.get("review", out) if isinstance(out, dict) else None
+            final = review_text(proposal) if proposal and "facts" in proposal else "Tool result received."
+        # Supply the controlled model's own complete quote; the Agent must not
+        # append another renderer/confirmation on its behalf.
         self.provider.return_value = text_reply(final)
         next_reply, self.state = self.agent.generate_next_message(results(tool_result(c.id, content, error)), self.state)
         return out, next_reply

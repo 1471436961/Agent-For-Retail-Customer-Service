@@ -148,7 +148,8 @@ class OrderStatusAliasTests(unittest.TestCase):
                 self.assertEqual(writes(), [])
                 history.extend([reply, result])
                 incoming = MultiToolMessage(role="tool", tool_messages=[result])
-            model.return_value = AssistantMessage(role="assistant", content="Here is the complete exchange proposal.")
+            from support_agent.domain.presentation import review_text
+            model.return_value = AssistantMessage(role="assistant", content=review_text(json.loads(result.content)["review"]))
             recap, state = agent.generate_next_message(incoming, state)
             self.assertIn("Please confirm", recap.content)
             self.assertIn("Is this the complete list", recap.content)

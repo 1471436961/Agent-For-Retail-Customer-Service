@@ -8,7 +8,7 @@ from copy import deepcopy
 
 def service_policy(operation):
     common = {
-        "confirmation": "Explain the complete relevant change and obtain clear consent referring to that change before writing. Questions, pauses and unmet conditions are not permission. Preparation is not submission.",
+        "confirmation": "Explain the complete relevant change and obtain clear consent referring to that change before writing. A clarification question alone, a pause or an unmet condition is not permission. Clear approval to submit may also contain a question about next steps. Read-only preparation needs no approval and is not submission.",
         "sources": ["meeting_transcript_01.vtt", "INTERFACE-CLARIFICATIONS.md U5"],
     }
     policies = {

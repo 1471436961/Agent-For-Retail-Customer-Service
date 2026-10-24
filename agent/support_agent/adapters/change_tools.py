@@ -96,7 +96,14 @@ class ChangeTools(CustomerTools):
 
     @is_tool(ToolType.READ)
     def prepare_change(self, kind: Literal["default_address", "order_address", "cancel", "payment", "modify_items", "return", "exchange"], parameters: ChangeParameters) -> dict:
-        """Prepare exactly one complete change, without performing any write.
+        """Get the accurate full quote now, without performing any write.
+
+        This is a READ. When choices and settlement details are known, call it
+        immediately; never ask permission to prepare, calculate or show a quote.
+        Use its verified prices, totals and difference in ONE complete recap,
+        then ask for submission approval. Do not offer to prepare it after an
+        initial confirmation. Answer any real clarification without restarting
+        an unchanged quote or inserting a separate list-completeness approval.
 
         parameters: address kinds need the complete address object; order kinds
         need order_id. cancel needs canonical reason; payment needs saved
@@ -117,7 +124,8 @@ class ChangeTools(CustomerTools):
         and display directly; a second review_change read is not required.
         Then obtain confirmation of the complete list and exact change before execute. Identity,
         ownership, status, catalog, quantities and finances are checked here.
-        New preparation supersedes any unattempted proposal for the same target.
+        A changed quote supersedes an unattempted proposal for the same target.
+        Reading the same unchanged quote preserves its ID and approval context.
         """
         with self._lock:
             self._customer_id()
@@ -130,6 +138,10 @@ class ChangeTools(CustomerTools):
     def _new_proposal(self, facts, parameters):
         if any(p["state"] in {"attempted", "unknown"} and p["facts"]["order_id"] == facts["order_id"] for p in self._proposals.values()):
             raise ReadError("unresolved_write_requires_inspection_no_new_write")
+        for previous in self._proposals.values():
+            if (previous["state"] == "prepared" and previous["parameters"] == parameters
+                    and execution_evidence(previous["facts"]) == execution_evidence(facts)):
+                return previous
         identifier = f"proposal-{len(self._proposals) + 1}"
         for previous in self._proposals.values():
             if previous["state"] == "prepared" and previous["facts"]["order_id"] == facts["order_id"]:
@@ -146,7 +158,7 @@ class ChangeTools(CustomerTools):
 
         Use this WRITE after a genuine natural-language recap of the full change
         and a later customer reply clearly approving those exact details. No
-        prepared proposal ID or second confirmation is required. A question,
+        prepared proposal ID or second confirmation is required. A question alone,
         conditional assent or request merely to check availability is not consent.
         The model interprets that meaning; the program does not match phrases.
         Parameters have the same seven-kind shapes as prepare_change. Prior
@@ -194,8 +206,9 @@ class ChangeTools(CustomerTools):
 
         Successful preparation already supplies the proposal for immediate
         display. Do not use this as an extra mandatory step after preparation.
-        The Agent displays its facts and asks for confirmation; this tool
-        itself does not imply that a customer has seen or approved the proposal.
+        Retrieval does not start another approval stage. The model preserves
+        any unchanged quote already explained and interprets actual later
+        consent; this tool itself proves no customer approval.
         It requires no preliminary approval to display the read-only proposal.
         For one-time item changes the recap also asks if this is the complete list.
         """
@@ -233,8 +246,9 @@ class ChangeTools(CustomerTools):
             if execution_evidence(current) != execution_evidence(proposal["facts"]):
                 proposal["state"] = "stale"
                 raise ReadError("facts_changed_prepare_and_confirm_again")
-            # Agent protocol independently enforces actual recap + later user
-            # turn. Toolkit has no dialogue channel and cannot prove consent.
+            # Agent protocol records response/customer chronology; the model
+            # must establish the actual recap and semantic consent. The toolkit
+            # has no dialogue channel and cannot prove either meaning.
             proposal["state"] = "attempted"
             outcome = write_once(self.client_api, proposal["facts"])
             outcome["customer_facts"] = customer_facts(proposal["facts"], outcome)

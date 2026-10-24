@@ -53,7 +53,11 @@ def item_text(item, name=None):
 
 
 def review_text(proposal):
-    """A compact, immutable factual footer; the model supplies the explanation."""
+    """Legacy factual recap, retained for historical fixtures and compatibility.
+
+    Live Agent replies are model-owned natural language; this formatter is not
+    appended to them or used to classify whether the customer gave consent.
+    """
     view = proposal_view(proposal)
     kind, body = view["kind"], view["body"]
     labels = {"default_address": "Default address", "order_address": "Order shipping address",

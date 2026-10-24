@@ -3,7 +3,7 @@
 from support_agent.gateway import GatewayAdapter
 from support_agent.prompts import IDENTITY_PROMPT, SYSTEM_PROMPT
 from support_agent.state import (
-    ProtocolError, SessionState, initial_state, receive, record_reply, restore_history, pending_reviews, review_bundle_text, receipt_text, store, normalize_call_ids, bind_submission_reference,
+    ProtocolError, SessionState, initial_state, receive, record_reply, restore_history, receipt_text, store, normalize_call_ids, bind_submission_reference,
 )
 from tau2.data_model.message import AssistantMessage, SystemMessage
 from support_agent.adapters.conversation_api import TRANSFER_NOTICE
@@ -57,8 +57,9 @@ class RetailAgent:
             if current.review_to_display:
                 prompt += ("\nA complete verified proposal is ready to display. Answer the customer's "
                            "outstanding questions using the policy and actual tool results, and explain the "
-                           "proposal now. Your text will be followed by its exact factual recap and final "
-                           "confirmation question, so do not duplicate that recap or question. "
+                           "complete proposal now, using its actual quoted amounts and settlement. "
+                           "You own the customer-facing recap: give it ONCE and ask ONE submission "
+                           "confirmation covering the complete change. No extra recap or question is appended. "
                            "Do not call review_change merely to fetch the same "
                            "proposal again. Do not execute before it has been displayed and the customer "
                            "subsequently clearly approves it. If facts need correction, invalidate or "
@@ -92,10 +93,6 @@ class RetailAgent:
                         text = render_model_reply(reply.content)
                     except ValueError as error:
                         raise ProtocolError(str(error)) from None
-                    if current.review_to_display:
-                        recap = review_bundle_text(pending_reviews(current))
-                        if not text.endswith(recap):
-                            text += "\n\n" + recap
                     if current.receipt_facts_to_display:
                         text += receipt_text(current.receipt_facts_to_display)
                     reply = reply.model_copy(update={"content": text})

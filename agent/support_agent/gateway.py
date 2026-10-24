@@ -67,21 +67,21 @@ class GatewayAdapter:
         # compatibility tests. New decisions have one business write channel.
         self.compatibility_actions = self.live_actions
         live_names = {"verify_customer", "get_customer_summary", "list_customer_orders",
-                      "get_owned_order", "list_products", "read_products",
-                      "get_catalog_summary", "calculate", "get_service_policy", "prepare_change",
+                      "get_owned_order", "list_products", "read_products", "read_context",
+                      "get_catalog_summary", "calculate", "prepare_change",
                       "submit_change", "invalidate_change", "inspect_change_result",
                       "get_service_status", "transfer_to_human"}
         self.live_actions = tuple(action for action in self.live_actions if action.name in live_names)
         descriptions = {
-            "verify_customer": "Independently verify by email OR full first/last name and postal code; match a supplied customer ID before profile details. Optionally read the explicitly named owned order. No catalogs are loaded. Use null claimed_customer_id only when none was supplied. Profile failure preserves verification, recover via get_customer_summary.",
-            "get_owned_order": "Read one exact owned order ID, checking membership and owner. Preserve #. Returns items, status and payments; no unrelated catalogs. Select product IDs from these records for read_products. Apply the supplied business rules.",
+            "verify_customer": "Independently verify by email OR full first/last name and postal code; match a supplied customer ID before profile details. Include the already-named order_id; for its item changes/exchange select include_product_variants=true for related catalogs. For order discovery select include_order_details=true. product_names selects explicitly requested catalog names/counts. All optional reads happen AFTER verification and return actual requested_order/requested_context records. No permission to read is needed. Reuse those records. Use null claimed_customer_id only when absent. Profile failure preserves verification; recover via get_customer_summary.",
+            "get_owned_order": "Read one exact owned order ID, checking membership and owner. Preserve #. Returns items, status and payments. For item-change/exchange requests, include_product_variants=true batches this order's related catalogs. Otherwise select relevant product IDs for read_products/read_context. Reuse actual records already returned.",
             "prepare_change": "READ ONLY: obtain an optional quote before explaining a proposed change. It changes no business data. No permission to prepare is needed. After an accurate recap and clear approval, use submit_change instead, even if no quote was prepared. parameters describe the complete change; preserve_options belong to each replacement row. Select order_id exactly from the verified records.",
             "submit_change": "WRITE: submit the exact complete change already explained and clearly approved in a later customer reply. This performs one real business API write after fresh checks. Use it immediately on approval; prepare_change would only quote again. No proposal ID or extra confirmation is required. parameters use the actual observed IDs, saved settlement method and ordered item occurrences. A question alone or unmet condition is not consent. Never retry an uncertain write. request_id is filled by the Agent.",
         }
         self.live_actions = tuple(action.model_copy(update={
             "params": create_model("Focused" + action.name, **{
                 key: (field.annotation, deepcopy(field)) for key, field in action.params.model_fields.items()
-                if key != "include_product_variants"}),
+            }),
             "short_desc": descriptions[action.name], "long_desc": "",
         }) if action.name in descriptions else action for action in self.live_actions)
         if any(action.info.get("tool_type") not in {"read", "write", "generic"} for action in self.actions):
@@ -158,6 +158,8 @@ class GatewayAdapter:
             fields = {}
             if action.name == "get_owned_order":
                 fields["order_id"] = (order_id, Field(...))
+            elif action.name == "read_context":
+                fields["order_ids"] = (list[order_id] | None, Field(default=None))
             elif action.name in {"prepare_change", "submit_change"}:
                 fields["parameters"] = (changes, Field(...))
             result.append(action.model_copy(update={"params": create_model(

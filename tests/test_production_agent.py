@@ -89,12 +89,14 @@ class ProductionAgentTests(unittest.TestCase):
         self.assertIn("uncertain",reply.content)
         self.assertEqual(self.writes(),[])
 
-    def test_live_schemas_do_not_request_unfocused_catalog_loading(self):
+    def test_live_schemas_keep_batch_scope_explicit_and_disabled_by_default(self):
         self.build(compatibility=False)
         actions={a.name:a for a in self.agent.gateway.live_actions}
         for name in ("verify_customer","get_owned_order"):
-            self.assertNotIn("include_product_variants",actions[name].params.model_fields)
+            self.assertIs(actions[name].params.model_fields["include_product_variants"].default,False)
         self.assertIn("read_products",actions)
+        self.assertIn("read_context",actions)
+        self.assertNotIn("get_service_policy",actions)
 
     def test_native_orchestrator_observes_normal_completion_and_actual_database_change(self):
         self.build("exchange",compatibility=False)

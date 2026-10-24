@@ -34,8 +34,9 @@ explanations are normal text too. For actions use normal tau2 tool_calls with
 object arguments and null content; wait for actual results before answering.
 When ALL stated goals have been resolved or their real supported limits have
 been explained, with no outstanding question, approval or uncertain write,
-you may append ###STOP### to the end of the final natural-language response.
-This is an optional control marker, not a customer phrase or proof of success.
+end the final natural-language response with ###STOP### to report completion.
+Intermediate replies need no marker. It signals your completion decision, not
+a customer phrase or proof that an operation succeeded.
 Never append it while requesting information/approval or leaving work pending.
 Completing an exchange-request goal means its actual registration, not later
 refund arrival or shipping. A successful write alone does not resolve other goals.

@@ -16,7 +16,7 @@ from support_agent.domain.policy import service_policy
 READ_ACTION_NAMES = (
     "verify_customer", "lookup_customer", "get_customer_summary", "list_customer_orders",
     "get_owned_order", "list_products", "get_product_variants", "get_catalog_item",
-    "get_catalog_summary", "read_products",
+    "get_catalog_summary", "read_products", "read_context",
 )
 VERIFICATION_ACTION_NAMES = frozenset({"verify_customer", "lookup_customer"})
 
@@ -69,7 +69,8 @@ class CustomerTools(ClientAPIToolKitBase):
     @is_tool(ToolType.READ)
     def verify_customer(self, email: str = "", first_name: str = "", last_name: str = "",
                         postal_code: str = "", claimed_customer_id: str | None = None,
-                        order_id: str = "", include_product_variants: bool = False) -> dict:
+                        order_id: str = "", include_product_variants: bool = False,
+                        include_order_details: bool = False, product_names: list[str] | None = None) -> dict:
         """Verify the customer's independently supplied identity, then read their profile.
 
         Provide email alone OR all of first_name, last_name and postal_code. An
@@ -86,6 +87,11 @@ class CustomerTools(ClientAPIToolKitBase):
         order/catalog/policy evidence without extra model/tool round trips.
         The optional order is not an identity selector. A failed optional read
         returns requested_order_error without discarding verified profile facts.
+        include_order_details=true additionally reads the verified customer's
+        owned orders when the request needs discovery. Exact product_names can
+        select requested catalog facts/counts in the same action. These optional
+        reads happen ONLY after successful independent verification; actual
+        records are returned as requested_context, not guessed from the request.
         """
         selector = identity_selector(email, first_name, last_name, postal_code)
         if claimed_customer_id is not None and not isinstance(claimed_customer_id, str):
@@ -126,6 +132,13 @@ class CustomerTools(ClientAPIToolKitBase):
                 except ReadError as error:
                     profile["requested_order_error"] = {"code": error.code, "operation": error.operation,
                                                         "http_status": error.http_status}
+            if include_order_details or product_names:
+                try:
+                    profile["requested_context"] = self.read_context(
+                        include_order_details=include_order_details, product_names=product_names)
+                except ReadError as error:
+                    profile["requested_context_error"] = {"code": error.code, "operation": error.operation,
+                                                          "http_status": error.http_status}
             return profile
 
     @is_tool(ToolType.READ)
@@ -214,7 +227,7 @@ class CustomerTools(ClientAPIToolKitBase):
             "order_address", "cancel", "payment", "modify_items") if order["status"] == "pending" else ()
         result = deepcopy(order)
         if include_product_variants:
-            # Historical optional batch; live decisions select product IDs.
+            # Explicit related-catalog selection; never an automatic prefetch.
             products = {}
             for item in order["items"]:
                 identifier = item["product_id"]
@@ -223,6 +236,41 @@ class CustomerTools(ClientAPIToolKitBase):
             result["product_variants"] = list(products.values())
             result["change_policies"] = {kind: service_policy(kind) for kind in kinds}
         return result
+
+    @is_tool(ToolType.READ)
+    def read_context(self, order_ids: list[str] | None = None, include_order_details: bool = False,
+                     product_ids: list[str] | None = None, product_names: list[str] | None = None) -> dict:
+        """Read the explicitly selected orders and catalogs together, without writing.
+
+        Use this for several independent reads already needed by the customer's
+        request, instead of separate model/tool turns. include_order_details=true
+        reads all owned orders when their IDs are unknown; otherwise order_ids
+        selects exact IDs from the verified profile. Do not combine those scopes.
+        product_ids or exact product_names select only relevant public catalogs;
+        each product includes total and available variant counts. Orders do not
+        automatically select catalogs. One profile is used for ownership checks
+        within this read; every order's actual owner is checked too. Failure
+        yields no partial response. No consent or business write is involved.
+        """
+        if (type(include_order_details) is not bool or
+                (order_ids is not None and not isinstance(order_ids, list))):
+            raise ReadError("invalid_context_selection")
+        if include_order_details and order_ids:
+            raise ReadError("choose_all_or_explicit_orders")
+        identifiers = [resource_id(value) for value in (order_ids or [])]
+        if not (include_order_details or identifiers or product_ids or product_names):
+            raise ReadError("context_selection_required")
+        with self._lock:
+            self._customer_id()
+            result = {}
+            if include_order_details or identifiers:
+                profile = self._profile()
+                selected = profile["order_ids"] if include_order_details else identifiers
+                result.update(customer_id=profile["customer_id"], order_ids=profile["order_ids"],
+                    orders=[self._read_owned_order(value, profile) for value in dict.fromkeys(selected)])
+            if product_ids or product_names:
+                result.update(self.read_products(product_ids=product_ids, product_names=product_names))
+            return result
 
     @is_tool(ToolType.READ)
     def read_products(self, product_ids: list[str] | None = None,

@@ -253,7 +253,7 @@ def receive(state, message):
             # Only successful tools for this verified account establish exact
             # owned IDs. Error-flagged results and customer text never do so.
             if (state.verified_customer_id and
-                    call["name"] in {"verify_customer", "lookup_customer", "get_customer_summary", "list_customer_orders"}
+                    call["name"] in {"verify_customer", "lookup_customer", "get_customer_summary", "list_customer_orders", "read_context"}
                     and isinstance(body.get("order_ids"), list)
                     and all(isinstance(value, str) and value for value in body["order_ids"])
                     and (call["name"] == "list_customer_orders" or
@@ -289,7 +289,8 @@ def record_reply(state, reply, actions, *, live=False):
         try:
             tool.params.model_validate(call.arguments, strict=True)
         except ValueError as error:
-            if any(issue["type"] == "literal_error" and issue["loc"][-1:] == ("order_id",)
+            if any(issue["type"] == "literal_error" and
+                   (issue["loc"][-1:] == ("order_id",) or "order_ids" in issue["loc"])
                    for issue in error.errors()):
                 raise ProtocolError("order_id must be selected exactly from the verified account's returned order IDs in the tool schema. Do not remove or add punctuation, guess an ID or scan every order to repair an ID spelling") from error
             raise ProtocolError("Arguments do not match tool schema") from error

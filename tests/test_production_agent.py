@@ -7,10 +7,10 @@ import json
 import unittest
 from copy import deepcopy
 import test_task_completion as completion
-from test_reference_runtime import reference_kit, apply_native_reference
+from test_reference_runtime import reference_kit, apply_native_reference, legacy_address
 from tau2.data_model.message import UserMessage, AssistantMessage
 from support_agent.state import SessionState
-from support_agent.domain.reply import response_content
+from support_agent.domain.reply import response_content, output_was_truncated
 from tau2.orchestrator.orchestrator import Orchestrator
 from tau2.data_model.tasks import Task, UserScenario
 from tau2.data_model.message import ToolCall
@@ -77,6 +77,107 @@ class ProductionAgentTests(unittest.TestCase):
         self.assertFalse(self.agent.is_stop(reply))
         self.assertFalse(self.agent.is_stop(UserMessage(role="user",content="###STOP###")))
         self.assertEqual(response_content("A normal reply without any marker."),("A normal reply without any marker.",False))
+
+    def test_completion_controls_are_model_decisions_and_never_visible(self):
+        self.assertEqual(response_content("###COMPLETE### Your request was accepted."),
+                         ("Your request was accepted.",True))
+        self.assertEqual(response_content("###CONTINUE### Do you approve this change?"),
+                         ("Do you approve this change?",False))
+        with self.assertRaisesRegex(ValueError,"Conflicting"):
+            response_content("###CONTINUE### A draft ###STOP###")
+        self.assertFalse(output_was_truncated(AssistantMessage(role="assistant",content="It ends mid-sentence")))
+
+    def test_metadata_confirmed_truncation_is_repaired_before_display_or_dispatch(self):
+        for tool_call in (False, True):
+            with self.subTest(tool_call=tool_call):
+                self.build(compatibility=False)
+                incomplete = (AssistantMessage(role="assistant",tool_calls=[ToolCall(id="truncated-call",name="verify_customer",
+                    arguments={"email":self.case["email"],"claimed_customer_id":None})]) if tool_call else
+                    AssistantMessage(role="assistant",content="Here are your options: You would then"))
+                incomplete.raw_data={"choices":[{"finish_reason":"length"}]}
+                fixed=AssistantMessage(role="assistant",content="###CONTINUE### Please provide your email or full name and postal code.")
+                self.model.side_effect=[incomplete,fixed]
+                reply,self.state=self.agent.generate_next_message(UserMessage(role="user",content="Please help with my order."),self.state)
+                self.assertEqual(reply.content,"Please provide your email or full name and postal code.")
+                self.assertFalse(reply.tool_calls)
+                self.assertFalse(self.agent.is_stop(reply))
+                self.assertIsNone(self.state["halt_reason"])
+                self.assertEqual(self.state["model_calls"],2)
+                self.assertEqual(self.requests,[])
+                self.assertEqual(len(self.state["history"]),2)  # Unshown draft is not fabricated dialogue.
+
+    def test_unmarked_receipt_reply_gets_one_internal_completion_decision(self):
+        incoming=self.read_request("exchange")
+        quote=self.result(self.decision(incoming,"prepare_change",{"kind":"exchange","parameters":self.params}))
+        p=json.loads(quote.content)
+        self.decision(quote,text="The complete exchange is "+json.dumps(p["facts"]["body"])+
+                      "; settlement "+json.dumps(p["facts"]["calculations"])+". Do you approve submission?")
+        receipt=self.result(self.decision(UserMessage(role="user",content="I approve that exact exchange and settlement. Submit it."),
+            "submit_change",{"kind":"exchange","parameters":self.params}))
+        calls=self.state["model_calls"]
+        original_history=deepcopy(self.state["history"])
+        self.model.side_effect=[AssistantMessage(role="assistant",content="Accepted. Anything else I can help with?"),
+            AssistantMessage(role="assistant",content="###COMPLETE### Your exchange request was accepted. Later settlement or shipping is not confirmed.")]
+        reply,self.state=self.agent.generate_next_message(receipt,self.state)
+        self.assertTrue(self.agent.is_stop(reply))
+        self.assertEqual(self.state["model_calls"],calls+2)
+        self.assertEqual(len(self.writes()),1)
+        self.assertEqual(self.state["history"][:-2],original_history)
+        self.assertNotIn("Anything else",json.dumps(self.state["history"]))
+
+    def test_internal_review_can_continue_another_goal_without_repeating_the_write(self):
+        incoming=self.read_request("default_address")
+        self.decision(incoming,text="I will change only your profile default to the confirmed full address. Do you approve this exact update?")
+        receipt=self.result(self.decision(UserMessage(role="user",content="Yes, submit the address update. Then read my order status."),
+            "submit_change",{"kind":"default_address","parameters":self.params}))
+        self.model.side_effect=[AssistantMessage(role="assistant",content="The address was updated."),
+            AssistantMessage(role="assistant",tool_calls=[ToolCall(id="remaining-read",name="get_owned_order",
+                arguments={"order_id":self.case["order_id"]})])]
+        reply,self.state=self.agent.generate_next_message(receipt,self.state)
+        self.assertEqual(reply.tool_calls[0].name,"get_owned_order")
+        self.assertFalse(self.agent.is_stop(reply))
+        self.assertEqual(len(self.writes()),1)
+        self.assertEqual(self.result(reply).error,False)
+
+    def test_subset_information_and_separate_profile_update_preserve_order(self):
+        # The provider selects the subset and judges consent. The test checks
+        # general arithmetic + observation reuse + scoped native API effects,
+        # not the model's understanding of any benchmark category or answer.
+        for adjustment in (0.0, 3.17):
+            with self.subTest(adjustment=adjustment):
+                self.build("default_address",compatibility=False)
+                native_order=self.runtime.environment.tools.db.orders[self.case["order_id"]]
+                native_order.address=type(native_order.address).model_validate(legacy_address(self.params["address"]))
+                for row in native_order.items:
+                    row.price += adjustment
+                order_before=native_order.model_dump()
+                verified=self.result(self.decision(UserMessage(role="user",content="Please value the requested subset and explain whether a partial cancellation is possible. My email is "+self.case["email"]),
+                    "verify_customer",{"email":self.case["email"],"claimed_customer_id":None,"order_id":self.case["order_id"]}))
+                observed=json.loads(verified.content)["requested_order"]
+                self.assertGreater(len(observed["items"]),1)
+                subset=observed["items"][:-1]
+                prices=[float(row["price"]) for row in subset]
+                calculated=self.result(self.decision(verified,"calculate",{"operation":"add","values":prices,"decimal_places":2}))
+                amount=float(json.loads(calculated.content)["result"])
+                self.assertEqual(amount,round(sum(prices),2))
+                self.assertNotEqual(amount,round(sum(float(row["price"]) for row in observed["items"]),2))
+                self.decision(calculated,text=f"The selected items have recorded value {amount:.2f}. Partial cancellation is unavailable for this pending order; that value is not an approved partial refund. Would you like to keep the order?")
+                self.assertEqual(self.writes(),[])
+                address={"address":observed["shipping_address"]}
+                quote=self.result(self.decision(UserMessage(role="user",content="Keep the order. Change only my profile default to the address on this order, without spelling out my street address."),
+                    "prepare_change",{"kind":"default_address","parameters":address}))
+                self.decision(quote,text="Change only your profile default to the existing address on order "+self.case["order_id"]+". This does not change the order. Do you approve this exact profile update?")
+                receipt=self.result(self.decision(UserMessage(role="user",content="Yes, submit that exact profile update using the order's address."),
+                    "submit_change",{"kind":"default_address","parameters":address}))
+                final=self.decision(receipt,text="###COMPLETE### Your profile default now matches that order's address. The order remains unchanged.")
+                self.assertTrue(self.agent.is_stop(final))
+                self.assertNotIn(address["address"]["address_line_1"],final.content)
+                self.assertEqual(len(self.writes()),1)
+                self.assertEqual(self.writes()[0]["method"],"PUT")
+                self.assertTrue(self.writes()[0]["path"].endswith("/default-shipping-address"))
+                self.assertEqual(self.runtime.environment.tools.db.orders[self.case["order_id"]].model_dump(),order_before)
+                profile=self.kit.get_customer_summary()
+                self.assertEqual(profile["default_shipping_address"],address["address"])
 
     def test_uncertain_write_prevents_completion_without_becoming_success(self):
         incoming=self.read_request("exchange")

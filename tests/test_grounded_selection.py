@@ -30,10 +30,17 @@ class GroundedSelectionTests(unittest.TestCase):
         self.build("exchange", compatibility=False)
         short = self.case["order_id"][1:]
         received = self.result(self.decision(UserMessage(role="user", content="My order reference is " + short),
-            "verify_customer", {"email":self.case["email"], "claimed_customer_id":None, "order_id":short}))
+            "verify_customer", {"email":self.case["email"], "claimed_customer_id":None, "order_id":short,
+                                "include_product_variants":True}))
         profile = json.loads(received.content)
-        self.assertEqual(profile["requested_order_error"]["code"], "order_access_denied")
-        self.assertFalse(any(r["path"].startswith("/v1/orders/") for r in self.requests))
+        self.assertNotIn("requested_order_error", profile)
+        order = profile["requested_order"]
+        self.assertEqual(order["order_id"], self.case["order_id"])
+        self.assertEqual(profile["requested_order_reference"], {"input":short, "order_id":self.case["order_id"]})
+        self.assertEqual({p["product_id"] for p in order["product_variants"]},
+                         {row["product_id"] for row in order["items"]})
+        self.assertEqual([r["path"] for r in self.requests if r["path"].startswith("/v1/orders/")],
+                         ["/v1/orders/" + quote(self.case["order_id"], safe="")])
         # An invalid proposed parameter is NOT sent to the host or rewritten.
         bad = AssistantMessage(role="assistant", tool_calls=[ToolCall(id="bad-order", name="get_owned_order", arguments={"order_id":short})])
         corrected = AssistantMessage(role="assistant", tool_calls=[ToolCall(id="exact-order", name="get_owned_order", arguments={"order_id":self.case["order_id"]})])
@@ -45,10 +52,29 @@ class GroundedSelectionTests(unittest.TestCase):
         order = json.loads(self.result(reply).content)
         self.assertEqual(order["order_id"], self.case["order_id"])
         self.assertEqual([r["path"] for r in self.requests if r["path"].startswith("/v1/orders/")],
-                         ["/v1/orders/" + quote(self.case["order_id"], safe="")])
+                         ["/v1/orders/" + quote(self.case["order_id"], safe="")] * 2)
         restored = self.agent.get_init_state(deepcopy(self.state["history"]))
         self.assertEqual(restored["owned_order_ids"], profile["order_ids"])
         self.assertEqual(self.writes(), [])
+
+    def test_intake_reference_selection_does_not_guess_or_bypass_ownership(self):
+        backend = SyntheticBackend()
+        kit = Tools(ClientAPI(backend, context=ClientAPIContext(conversation_id="reference-scope")))
+        customer = backend.records["customers"][0]
+        for reference in ("missing-order", "../orders/foreign", "%23not-an-id"):
+            start = len(backend.calls)
+            profile = kit.verify_customer(email=customer["email"], order_id=reference, include_product_variants=True)
+            self.assertEqual(profile["requested_order_error"]["code"], "order_access_denied")
+            self.assertFalse(any(r["path"].startswith("/v1/orders/") or "/catalog/" in r["path"]
+                                 for r in backend.calls[start:]))
+        # Exact IDs win if a store actually owns both spellings. This helper
+        # selects only returned records; it never manufactures a canonical ID.
+        self.assertEqual(kit._initial_order_reference("DISPLAY-7", ["#DISPLAY-7", "DISPLAY-7"]), "DISPLAY-7")
+        self.assertEqual(kit._initial_order_reference("DISPLAY-7", ["#DISPLAY-7"]), "#DISPLAY-7")
+        with self.assertRaises(ReadError):
+            kit._initial_order_reference("display-7", ["#DISPLAY-7"])
+        with self.assertRaises(ReadError):
+            kit._initial_order_reference("#DISPLAY-7", ["##DISPLAY-7"])
 
     def test_approved_natural_recap_corrects_bad_id_and_reaches_one_real_write(self):
         self.build("exchange", compatibility=False)

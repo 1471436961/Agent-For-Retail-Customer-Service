@@ -20,7 +20,7 @@ from tau2.evaluator.evaluator import evaluate_simulation, EvaluationType
 class CompletionBoundaryTests(unittest.TestCase):
     build = completion.TaskCompletionTests.build
 
-    def run_dialogue(self, kind, *, efficient, max_steps):
+    def run_dialogue(self, kind, *, efficient, max_steps, short_reference=False, review_final=False):
         self.build(kind, compatibility=not efficient)
         case, params = self.case, self.params
         order = self.runtime.environment.tools.db.orders[case["order_id"]]
@@ -29,7 +29,7 @@ class CompletionBoundaryTests(unittest.TestCase):
         names = [self.runtime.environment.tools.db.products[value].name for value in products]
         verification = {"email":case["email"], "claimed_customer_id":None}
         if kind == "exchange":
-            verification["order_id"] = case["order_id"]
+            verification["order_id"] = case["order_id"][1:] if short_reference else case["order_id"]
             if efficient:
                 verification["include_product_variants"] = True
         elif efficient:
@@ -52,6 +52,8 @@ class CompletionBoundaryTests(unittest.TestCase):
         if not efficient and kind == "exchange":
             script.append("Before approving, please explain the supplied exchange process and any real limits.")
         script.append("I approve this exact complete change and settlement. Submit it.")
+        if review_final:
+            schedule[-1:] = ["unmarked_final", "final"]
 
         class Customer:
             def get_init_state(self, message_history=None):
@@ -84,9 +86,10 @@ class CompletionBoundaryTests(unittest.TestCase):
                 facts = prepare(ObservedFacts(self.kit),kind,params)
                 text = "The complete change is " + json.dumps(facts["body"]) + "; actual calculations " + json.dumps(facts["calculations"]) + "; applicable process " + json.dumps(facts["policy"]) + ". Do you approve this full submission?"
             else:
-                actual = json.loads(kwargs["messages"][-1].content)["result"]
+                actual = json.loads(next(m.content for m in reversed(kwargs["messages"]) if m.role == "tool"))["result"]
                 self.assertEqual(actual["state"], "accepted" if kind == "exchange" else "completed")
-                text = "The actual receipt confirms your requested change: " + json.dumps(actual["customer_facts"]) + ". Later refund arrival or shipping is not confirmed. ###STOP###"
+                text = "The actual receipt confirms your requested change: " + json.dumps(actual["customer_facts"]) + ". Later refund arrival or shipping is not confirmed."
+                text = text + " Anything else?" if choice == "unmarked_final" else "###COMPLETE### " + text
             return AssistantMessage(role="assistant",content=text)
 
         self.model.side_effect = provider
@@ -153,3 +156,12 @@ class CompletionBoundaryTests(unittest.TestCase):
             self.kit.read_context(order_ids=["foreign-or-unknown-record"])
         self.assertFalse(any(r["path"].startswith("/v1/orders/") for r in self.requests[start:]))
         self.assertEqual(verified["customer_id"],context["customer_id"])
+
+    def test_initial_display_reference_and_internal_review_do_not_spend_host_turns(self):
+        simulation,_ = self.run_dialogue("exchange",efficient=True,max_steps=16,
+                                        short_reference=True,review_final=True)
+        self.assertEqual(simulation.termination_reason.value,"agent_stop")
+        self.assertEqual(len(simulation.messages),15)
+        self.assertTrue(self.agent.is_stop(simulation.messages[-1]))
+        self.assertEqual(self.model.call_count,8)  # Seven decisions, one unshown-draft review.
+        self.assertFalse(any("requested_order_error" in (m.content or "") for m in simulation.messages))

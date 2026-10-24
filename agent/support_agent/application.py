@@ -8,7 +8,10 @@ from support_agent.state import (
 from tau2.data_model.message import AssistantMessage, SystemMessage
 from support_agent.adapters.conversation_api import TRANSFER_NOTICE
 from support_agent.domain.gateway_failure import diagnose_gateway_failure
-from support_agent.domain.reply import REPLY_INSTRUCTIONS, response_content
+from support_agent.domain.reply import (
+    REPLY_INSTRUCTIONS, COMPLETION_REVIEW, response_content,
+    has_completion_decision, output_was_truncated,
+)
 from support_agent.progress import evidence_view, unresolved_operations
 from support_agent.domain.policy import business_rules
 import json
@@ -69,6 +72,8 @@ class RetailAgent:
                 current.gateway_diagnostic = diagnose_gateway_failure(error)
                 return self._stop(current, "gateway_failure")
             try:
+                if isinstance(reply, AssistantMessage) and output_was_truncated(reply):
+                    raise ProtocolError("Provider reported output truncation. No draft content or call was executed. Return a shorter complete reply within the unchanged token settings")
                 reply = normalize_call_ids(current, reply)
                 reply = bind_submission_reference(current, reply)
                 if isinstance(reply, AssistantMessage) and reply.tool_calls and reply.content:
@@ -77,6 +82,16 @@ class RetailAgent:
                         current.request_tool_rounds >= self.gateway.limits.max_tool_rounds):
                     return self._stop(current, "tool_round_limit")
                 if isinstance(reply, AssistantMessage) and not reply.tool_calls and reply.content:
+                    # A receipt is evidence, not completion. If the model forgot
+                    # to decide, ask it once within this SAME host turn. Never
+                    # auto-finish, parse customer wording, or display two replies.
+                    if (attempt == 0 and current.receipt_facts_to_display and
+                            not unresolved_operations(current) and
+                            not has_completion_decision(reply.content) and
+                            current.model_calls < self.gateway.limits.max_model_calls):
+                        messages = [*messages, SystemMessage(role="system", timestamp=None,
+                            content=COMPLETION_REVIEW + json.dumps(reply.content, ensure_ascii=False))]
+                        continue
                     try:
                         text, complete = response_content(reply.content)
                     except ValueError as error:

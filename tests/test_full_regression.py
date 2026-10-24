@@ -165,6 +165,7 @@ class FullRegressionTests(unittest.TestCase):
         self.assertEqual(out["state"], "completed")
         self.assertEqual(reply.content, explanation)
         messages = self.provider.call_args.kwargs["messages"]
-        evidence = json.loads(messages[-1].content)["result"]
+        # A same-turn completion review can follow the actual tool result.
+        evidence = json.loads(next(m.content for m in reversed(messages) if m.role == "tool"))["result"]
         self.assertEqual(evidence["customer_facts"], out["customer_facts"])
         self.assertEqual(self.state["receipt_facts_to_display"], [])

@@ -87,6 +87,9 @@ class CustomerTools(ClientAPIToolKitBase):
         order/catalog/policy evidence without extra model/tool round trips.
         The optional order is not an identity selector. A failed optional read
         returns requested_order_error without discarding verified profile facts.
+        This initial display reference can omit a single leading # only when
+        it uniquely selects an ID in the independently verified own-order list.
+        The returned canonical ID, never a constructed ID, is used for the read.
         include_order_details=true additionally reads the verified customer's
         owned orders when the request needs discovery. Exact product_names can
         select requested catalog facts/counts in the same action. These optional
@@ -127,8 +130,11 @@ class CustomerTools(ClientAPIToolKitBase):
                                           "http_status": error.http_status}}
             if order_id:
                 try:
+                    selected = self._initial_order_reference(resource_id(order_id), profile["order_ids"])
                     profile["requested_order"] = self._read_owned_order(
-                        resource_id(order_id), profile, include_product_variants)
+                        selected, profile, include_product_variants)
+                    if selected != order_id:
+                        profile["requested_order_reference"] = {"input": order_id, "order_id": selected}
                 except ReadError as error:
                     profile["requested_order_error"] = {"code": error.code, "operation": error.operation,
                                                         "http_status": error.http_status}
@@ -140,6 +146,22 @@ class CustomerTools(ClientAPIToolKitBase):
                     profile["requested_context_error"] = {"code": error.code, "operation": error.operation,
                                                           "http_status": error.http_status}
             return profile
+
+    @staticmethod
+    def _initial_order_reference(reference, owned_ids):
+        """Select a record, not an identifier spelling to probe against the API.
+
+        Only the intake display form permits an omitted #. All later reads and
+        writes still require an exact observed ID. Exact matches take priority;
+        no case folding, URL decoding, fuzzy matching or foreign-order search.
+        """
+        if reference in owned_ids:
+            return reference
+        matches = [value for value in dict.fromkeys(owned_ids)
+                   if not reference.startswith("#") and value.startswith("#") and value[1:] == reference]
+        if len(matches) != 1:
+            raise ReadError("order_access_denied")
+        return matches[0]
 
     @is_tool(ToolType.READ)
     def lookup_customer(self, customer_id: str, email: str = "") -> dict:

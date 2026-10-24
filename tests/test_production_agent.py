@@ -60,7 +60,7 @@ class ProductionAgentTests(unittest.TestCase):
                 outcome=json.loads(receipt.content)
                 self.assertEqual(outcome["state"],"accepted" if kind in {"return","exchange"} else "completed")
                 final=self.decision(receipt,text="The actual receipt confirms the requested operation. No later settlement or shipping is implied. ###STOP###")
-                self.assertTrue(self.agent.is_stop(final))
+                self.assertFalse(self.agent.is_stop(final))  # The customer can still follow up.
                 self.assertNotIn("###STOP###",final.content)
                 self.assertEqual(len(self.writes()),1)
                 fresh=[r for r in self.requests[before:] if r["method"]=="GET"]
@@ -106,7 +106,7 @@ class ProductionAgentTests(unittest.TestCase):
                 self.assertEqual(self.requests,[])
                 self.assertEqual(len(self.state["history"]),2)  # Unshown draft is not fabricated dialogue.
 
-    def test_unmarked_receipt_reply_gets_one_internal_completion_decision(self):
+    def test_receipt_reply_uses_one_decision_and_leaves_the_customer_turn_open(self):
         incoming=self.read_request("exchange")
         quote=self.result(self.decision(incoming,"prepare_change",{"kind":"exchange","parameters":self.params}))
         p=json.loads(quote.content)
@@ -116,22 +116,20 @@ class ProductionAgentTests(unittest.TestCase):
             "submit_change",{"kind":"exchange","parameters":self.params}))
         calls=self.state["model_calls"]
         original_history=deepcopy(self.state["history"])
-        self.model.side_effect=[AssistantMessage(role="assistant",content="Accepted. Anything else I can help with?"),
-            AssistantMessage(role="assistant",content="###COMPLETE### Your exchange request was accepted. Later settlement or shipping is not confirmed.")]
+        self.model.side_effect=[AssistantMessage(role="assistant",content="Your exchange request was accepted. Later settlement or shipping is not confirmed.")]
         reply,self.state=self.agent.generate_next_message(receipt,self.state)
-        self.assertTrue(self.agent.is_stop(reply))
-        self.assertEqual(self.state["model_calls"],calls+2)
+        self.assertFalse(self.agent.is_stop(reply))
+        self.assertEqual(self.state["model_calls"],calls+1)
         self.assertEqual(len(self.writes()),1)
         self.assertEqual(self.state["history"][:-2],original_history)
         self.assertNotIn("Anything else",json.dumps(self.state["history"]))
 
-    def test_internal_review_can_continue_another_goal_without_repeating_the_write(self):
+    def test_receipt_can_continue_another_goal_without_repeating_the_write(self):
         incoming=self.read_request("default_address")
         self.decision(incoming,text="I will change only your profile default to the confirmed full address. Do you approve this exact update?")
         receipt=self.result(self.decision(UserMessage(role="user",content="Yes, submit the address update. Then read my order status."),
             "submit_change",{"kind":"default_address","parameters":self.params}))
-        self.model.side_effect=[AssistantMessage(role="assistant",content="The address was updated."),
-            AssistantMessage(role="assistant",tool_calls=[ToolCall(id="remaining-read",name="get_owned_order",
+        self.model.side_effect=[AssistantMessage(role="assistant",tool_calls=[ToolCall(id="remaining-read",name="get_owned_order",
                 arguments={"order_id":self.case["order_id"]})])]
         reply,self.state=self.agent.generate_next_message(receipt,self.state)
         self.assertEqual(reply.tool_calls[0].name,"get_owned_order")
@@ -170,7 +168,7 @@ class ProductionAgentTests(unittest.TestCase):
                 receipt=self.result(self.decision(UserMessage(role="user",content="Yes, submit that exact profile update using the order's address."),
                     "submit_change",{"kind":"default_address","parameters":address}))
                 final=self.decision(receipt,text="###COMPLETE### Your profile default now matches that order's address. The order remains unchanged.")
-                self.assertTrue(self.agent.is_stop(final))
+                self.assertFalse(self.agent.is_stop(final))
                 self.assertNotIn(address["address"]["address_line_1"],final.content)
                 self.assertEqual(len(self.writes()),1)
                 self.assertEqual(self.writes()[0]["method"],"PUT")
@@ -216,7 +214,7 @@ class ProductionAgentTests(unittest.TestCase):
                 messages=["Please handle my requested exchange. My email is "+case["email"],
                           "I approve the exact complete exchange and settlement you described. Submit it."]
                 if state>=len(messages):
-                    raise AssertionError("The Agent failed to end after the resolved request")
+                    return UserMessage(role="user",content="Thank you. ###STOP###"),state+1
                 return UserMessage(role="user",content=messages[state]),state+1
 
             def stop(self,*_args):
@@ -243,13 +241,13 @@ class ProductionAgentTests(unittest.TestCase):
         runner=Orchestrator(domain="retail_plus",agent=self.agent,user=Customer(),environment=self.host,task=task,
                             validate_communication=True)
         simulation=runner.run()
-        self.assertEqual(simulation.termination_reason.value,"agent_stop")
+        self.assertEqual(simulation.termination_reason.value,"user_stop")
         self.assertEqual(self.model.call_count,len(calls))
         self.assertEqual(len(self.writes()),1)
-        self.assertTrue(self.agent.is_stop(simulation.messages[-1]))
+        self.assertFalse(self.agent.is_stop(simulation.messages[-2]))
         # The native sealed boundary retains this legitimate message metadata.
         from tau2.hyper.sandbox.sealed_runner import _candidate_visible_message
-        self.assertTrue(_candidate_visible_message(simulation.messages[-1])["raw_data"]["retail_service_complete"])
+        self.assertTrue(_candidate_visible_message(simulation.messages[-2])["raw_data"]["retail_service_complete"])
         _,gold,_=reference_kit()
         apply_native_reference(gold.environment.tools,"exchange",case["customer_id"],params)
         self.assertEqual(self.runtime.environment.get_db_hash(),gold.environment.get_db_hash())
@@ -267,7 +265,7 @@ class ProductionAgentTests(unittest.TestCase):
         result=self.result(self.decision(approval,"submit_change",{"kind":"order_address","parameters":address}))
         result=self.result(self.decision(result,"submit_change",{"kind":"payment","parameters":payment}))
         reply=self.decision(result,text="Both requested operations completed with separate actual receipts. ###STOP###")
-        self.assertTrue(self.agent.is_stop(reply))
+        self.assertFalse(self.agent.is_stop(reply))
         self.assertEqual(len(self.writes()),2)
         self.assertEqual({p["state"] for p in self.state["proposals"].values()},{"completed"})
         _,gold,_=reference_kit()

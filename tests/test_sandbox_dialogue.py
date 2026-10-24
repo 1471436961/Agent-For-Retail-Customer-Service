@@ -115,7 +115,7 @@ class SandboxDialogueTests(unittest.TestCase):
                     ToolMessage(role="tool", id=call.id, content=json.dumps(facts))]), state)
                 self.assertIsNone(state["halt_reason"])
                 self.assertIn("alex.p0@example.test", reply.content)
-                self.assertTrue(agent.is_stop(reply))
+                self.assertFalse(agent.is_stop(reply))  # Ordinary closure belongs to the customer/host.
                 self.assertNotIn("###STOP###", reply.content)
 
             self.assertEqual(len(http_requests), 3)

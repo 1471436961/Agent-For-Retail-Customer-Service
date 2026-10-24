@@ -174,7 +174,8 @@ class TaskCompletionTests(unittest.TestCase):
         prepared = self.prepare("exchange")
         proposal = json.loads(prepared.content)
         self.assertIn("No refund-arrival timeframe", proposal["facts"]["policy"]["refund_timing"])
-        totals = {row["purpose"]: row["result"] for row in proposal["facts"]["calculations"] if "purpose" in row}
+        totals = {row["purpose"]: row["result"] for row in proposal["facts"]["calculations"]
+                  if row.get("purpose") in {"original_total", "replacement_total"}}
         self.assertEqual(set(totals), {"original_total", "replacement_total"})
         policy = self.kit.get_service_policy("exchange")
         self.assertIn("no separate purchase", policy["process"])

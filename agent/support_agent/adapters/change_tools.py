@@ -11,17 +11,18 @@ from support_agent.adapters.write_api import write_once, resume_workflow, observ
 from support_agent.adapters.conversation_api import transfer_once
 from support_agent.domain.plans import order_requests
 from support_agent.domain.receipts import customer_facts
-from support_agent.adapters.change_parameters import ChangeParameters, PlanRequest
+from support_agent.adapters.change_parameters import ChangeParameters, PlanRequest, SubmissionRequest, validate_change_shape
 from support_agent.domain.policy import service_policy
 from support_agent.domain.observations import ObservedFacts, CurrentFacts
 
-PREPARATION_ACTION_NAMES = ("compare_variants", "calculate", "get_service_policy", "prepare_change")
+PREPARATION_ACTION_NAMES = ("compare_variants", "calculate", "get_service_policy", "prepare_change", "prepare_changes")
 REVIEW_ACTION_NAMES = ("review_change", "invalidate_change")
 PLAN_ACTION_NAMES = ("plan_changes", "prepare_plan_step", "abandon_plan", "get_service_status", "inspect_change_result", "transfer_to_human")
 EXECUTE_ACTIONS = {"execute_default_address": "default_address", "execute_order_address": "order_address", "execute_cancellation": "cancel",
                    "execute_payment": "payment", "execute_item_modification": "modify_items", "execute_return": "return", "execute_exchange": "exchange"}
 DIRECT_ACTION = "submit_change"
-ACTION_NAMES = (*READ_ACTION_NAMES, *PREPARATION_ACTION_NAMES, *REVIEW_ACTION_NAMES, *PLAN_ACTION_NAMES, *EXECUTE_ACTIONS, DIRECT_ACTION)
+BATCH_DIRECT_ACTION = "submit_changes"
+ACTION_NAMES = (*READ_ACTION_NAMES, *PREPARATION_ACTION_NAMES, *REVIEW_ACTION_NAMES, *PLAN_ACTION_NAMES, *EXECUTE_ACTIONS, DIRECT_ACTION, BATCH_DIRECT_ACTION)
 
 
 class ChangeTools(CustomerTools):
@@ -100,7 +101,8 @@ class ChangeTools(CustomerTools):
             return service_policy(operation)
 
     @is_tool(ToolType.READ)
-    def prepare_change(self, kind: Literal["default_address", "order_address", "cancel", "payment", "modify_items", "return", "exchange"], parameters: ChangeParameters) -> dict:
+    def prepare_change(self, kind: Literal["default_address", "order_address", "cancel", "payment", "modify_items", "return", "exchange"], parameters: ChangeParameters,
+                       supersedes: list[str] | None = None) -> dict:
         """Quote the selected change from actual observed records, without writing.
 
         This is a READ. When choices and settlement details are known, call it
@@ -132,6 +134,9 @@ class ChangeTools(CustomerTools):
         ownership, status, catalog, quantities and finances are checked here.
         A changed quote supersedes an unattempted proposal for the same target.
         Reading the same unchanged quote preserves its ID and approval context.
+        supersedes explicitly retires old unsubmitted drafts for this target
+        while preparing the revised quote, including a change of operation.
+        Do not call invalidate_change first when this revised quote suffices.
         """
         with self._lock:
             self._customer_id()
@@ -139,7 +144,52 @@ class ChangeTools(CustomerTools):
             if any(p["state"] in {"attempted", "pending", "unknown"} and p["facts"]["order_id"] == target for p in self._proposals.values()):
                 raise ReadError("unresolved_write_requires_inspection_no_new_write")
             facts = prepare(ObservedFacts(self, load_missing=True), kind, deepcopy(parameters))
-            return deepcopy(self._new_proposal(facts, parameters))
+            replaced = self._replacement_drafts(supersedes, {facts["order_id"]})
+            proposal = self._new_proposal(facts, parameters)
+            return self._retire_drafts(replaced, [proposal], deepcopy(proposal))
+
+    def _replacement_drafts(self, identifiers, targets):
+        if identifiers is None:
+            return []
+        if not isinstance(identifiers, list) or any(not isinstance(value, str) for value in identifiers):
+            raise ReadError("invalid_superseded_proposals")
+        proposals = [self._proposal(value) for value in dict.fromkeys(identifiers)]
+        if any(p["state"] != "prepared" or p["facts"]["order_id"] not in targets for p in proposals):
+            raise ReadError("only_unattempted_same_target_drafts_can_be_superseded")
+        return proposals
+
+    @staticmethod
+    def _retire_drafts(previous, replacements, result):
+        retained = {p["proposal_id"] for p in replacements}
+        retired = []
+        for proposal in previous:
+            if proposal["proposal_id"] not in retained:
+                proposal["state"] = "superseded"
+                retired.append(proposal["proposal_id"])
+        if retired:
+            result["superseded_proposal_ids"] = retired
+        return result
+
+    @is_tool(ToolType.READ)
+    def prepare_changes(self, requests: list[PlanRequest], supersedes: list[str] | None = None) -> dict:
+        """Quote several explicitly selected changes in one read-only call.
+
+        Each request is {kind, parameters}, using that kind's exact schema.
+        Use for multiple orders or profile plus order changes; one later recap
+        and approval can cover all. No write, execution plan or permission to
+        prepare is created. Address/payment precede item changes. Incompatible
+        same-order return/exchange requests require a customer choice first.
+        supersedes retires specified unsubmitted drafts on these same targets.
+        """
+        with self._lock:
+            self._customer_id()
+            ordered = order_requests(requests)
+            facts = [prepare(ObservedFacts(self, load_missing=True), row["kind"], deepcopy(row["parameters"]))
+                     for row in ordered]
+            replaced = self._replacement_drafts(supersedes, {row["order_id"] for row in facts})
+            proposals = [self._new_proposal(fact, row["parameters"]) for fact, row in zip(facts, ordered)]
+            result = {"state": "prepared", "changes": deepcopy(proposals)}
+            return self._retire_drafts(replaced, proposals, result)
 
     def _new_proposal(self, facts, parameters):
         if any(p["state"] in {"attempted", "pending", "unknown"} and p["facts"]["order_id"] == facts["order_id"] for p in self._proposals.values()):
@@ -200,6 +250,54 @@ class ChangeTools(CustomerTools):
                                "notice": "The change was not submitted. Recheck facts and obtain approval if the proposal changed."}}
                 proposal["outcome"] = outcome
                 return deepcopy(outcome)
+
+    @is_tool(ToolType.WRITE)
+    def submit_changes(self, requests: list[SubmissionRequest]) -> dict:
+        """Submit several exact changes covered by the customer's clear approval.
+
+        Each request is {kind, parameters}; request_id is bound by the Agent.
+        Use for approved returns on multiple orders or profile/order updates.
+        Validate the whole observed request list first, then perform each real
+        business write sequentially with fresh preflight checks. This is not an
+        atomic cross-order transaction. Stop on a failed, pending or unknown
+        result; report actual partial results, never repeat successful writes.
+        A single recap and later consent must cover every change in this call.
+        """
+        with self._lock:
+            self._customer_id()
+            rows = [{"kind": row["kind"], "parameters": row["parameters"]} for row in requests]
+            ordered = order_requests(rows)
+            references = {(row["kind"], row["parameters"].get("order_id")): row.get("request_id") for row in requests}
+            if any(not isinstance(value, str) or not value for value in references.values()):
+                raise ReadError("missing_submission_request_reference")
+            # No writes occur while verifying the complete observed batch.
+            for row in ordered:
+                validate_change_shape(row["kind"], row["parameters"])
+                reference = references[(row["kind"], row["parameters"].get("order_id"))]
+                if reference in self._submissions:
+                    proposal = self._proposal(self._submissions[reference])
+                    if proposal["facts"]["kind"] != row["kind"] or proposal["parameters"] != row["parameters"]:
+                        raise ReadError("submission_reference_reused_for_different_change")
+                    continue
+                prepare(ObservedFacts(self), row["kind"], deepcopy(row["parameters"]))
+            results = []
+            for row in ordered:
+                target = row["parameters"].get("order_id")
+                reference = references[(row["kind"], target)]
+                try:
+                    outcome = self.submit_change(row["kind"], row["parameters"], reference)
+                except ReadError as error:
+                    # submit_change can raise only before a business write;
+                    # preserve prior actual outcomes instead of losing them.
+                    outcome = {"state": "failed", "error": error.code,
+                               "customer_facts": {"kind": row["kind"], "order_id": target,
+                                   "state": "failed", "notice": "This change was not submitted."}}
+                results.append({"kind": row["kind"], "order_id": target, "request_id": reference,
+                                "outcome": outcome})
+                if outcome["state"] not in {"completed", "accepted"}:
+                    break
+            return {"results": results, "remaining": len(ordered) - len(results),
+                    "notice": "Separate actual outcomes; no cross-operation atomicity or unreported success."}
 
     def _proposal(self, identifier):
         self._customer_id()
@@ -269,6 +367,13 @@ class ChangeTools(CustomerTools):
         proposal["state"] = outcome["state"]
         if outcome["state"] in {"completed", "accepted"}:
             receipt = outcome["receipt"]
+            if facts["kind"] in {"cancel", "modify_items", "return", "exchange"}:
+                # The actual one-time write changed this order's eligibility.
+                # Other unsubmitted drafts for it are now obsolete, regardless
+                # of which earlier operation the customer was considering.
+                for previous in self._proposals.values():
+                    if previous["state"] == "prepared" and previous["facts"]["order_id"] == facts["order_id"]:
+                        previous["state"] = "superseded"
             if facts["kind"] == "default_address" and self._observed_profile:
                 self._observed_profile["default_shipping_address"] = deepcopy(receipt["default_shipping_address"])
             elif facts["order_id"] in self._observed_orders:

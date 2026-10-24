@@ -1,6 +1,6 @@
 """Model-visible shapes for the existing seven preparation operations."""
 from typing import Literal
-from pydantic import Field
+from pydantic import Field, ValidationError, model_validator
 from support_agent.adapters.read_models import Record, Address, ItemReplacement, NonEmpty
 
 
@@ -42,7 +42,46 @@ class ReturnParameters(Record):
 ChangeParameters = (DefaultAddressParameters | OrderAddressParameters | CancellationParameters |
                     PaymentParameters | ReplacementParameters | ReturnParameters)
 
+PARAMETERS_BY_KIND = {
+    "default_address": DefaultAddressParameters, "order_address": OrderAddressParameters,
+    "cancel": CancellationParameters, "payment": PaymentParameters,
+    "modify_items": ReplacementParameters, "return": ReturnParameters,
+    "exchange": ReplacementParameters,
+}
+
+
+def validate_change_shape(kind, parameters):
+    """Bind an operation to its own schema, without interpreting user intent.
+
+    An untagged union alone accepts a replacement payload for an address kind.
+    Error descriptions contain schema names only, never private input values.
+    """
+    model = PARAMETERS_BY_KIND.get(kind) if isinstance(kind, str) else None
+    if model is None:
+        raise ValueError("Select a supported change kind")
+    try:
+        model.model_validate(parameters, strict=True)
+    except ValidationError:
+        required = [name for name, field in model.model_fields.items() if field.is_required()]
+        raise ValueError(f"For {kind}, parameters require {', '.join(required)}; allowed fields: " +
+                         ", ".join(model.model_fields) + ". Use this operation's schema, not another kind's parameters") from None
+
 
 class PlanRequest(Record):
     kind: Literal["default_address", "order_address", "cancel", "payment", "modify_items", "return", "exchange"]
-    parameters: ChangeParameters
+    parameters: ChangeParameters = Field(description=
+        "Choose the shape belonging to kind: default_address={address}; order_address={order_id,address}; "
+        "cancel={order_id,reason}; payment={order_id,payment_method_id}; "
+        "modify_items/exchange={order_id,replacements,payment_method_id}; "
+        "return={order_id,item_ids,refund_payment_method_id}. Do not mix operation fields.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def match_operation(cls, value):
+        if isinstance(value, dict):
+            validate_change_shape(value.get("kind"), value.get("parameters"))
+        return value
+
+
+class SubmissionRequest(PlanRequest):
+    request_id: str = ""

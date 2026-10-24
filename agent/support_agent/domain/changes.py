@@ -90,7 +90,10 @@ def prepare(kit, kind, params):
             product = kit.get_product_variants(old["product_id"])
             target = next((i for i in product["items"] if i["item_id"] == row["replacement_item_id"]), None)
             require(target is not None and target["available"], "replacement_not_same_product_or_unavailable")
-            require(target["item_id"] != old["item_id"], "unchanged_item")
+            # A damaged delivered unit may be exchanged for an identical
+            # available variant. Only pending-order modification forbids a
+            # no-op row, matching the actual operation-specific contract.
+            require(kind == "exchange" or target["item_id"] != old["item_id"], "unchanged_item")
             required = [key for key in preserve if key in old["options"]] + choice["preserve_options"]
             require(all(key in old["options"] and target["options"].get(key) == old["options"][key]
                         for key in required), "required_option_changed")
@@ -101,6 +104,9 @@ def prepare(kit, kind, params):
             {"purpose": "replacement_total", **calculate_values("sum", values[::2])},
             {"purpose": "original_total", **calculate_values("sum", values[1::2])},
         ])
+        calculations.extend({"purpose": "replacement_row", "row_index": index,
+                             **calculate_values("price_difference", values[index * 2:index * 2 + 2])}
+                            for index in range(len(rows)))
         method = _method(profile, params.get("payment_method_id"))
         _balance(method, calculations[0]["result"])
         body = {"replacements": rows, "payment_method_id": method["id"]}

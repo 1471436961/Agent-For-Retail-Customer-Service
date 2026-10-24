@@ -160,7 +160,7 @@ class ContractBoundaryTests(unittest.TestCase):
         self.assertEqual(tool.info["tool_type"], "generic")
         self.assertEqual(tool.info["mutates_state"], operation["x-api-mutates-state"])
         mutators = {name for name, tool in self.kit.get_tools().items() if tool.info["mutates_state"]}
-        self.assertEqual(mutators, {*EXECUTE_ACTIONS, "submit_change", "transfer_to_human"})
+        self.assertEqual(mutators, {*EXECUTE_ACTIONS, "submit_change", "submit_changes", "transfer_to_human"})
 
     def test_bad_nested_plan_targets_fail_before_any_operation(self):
         self.kit.verify_customer(email="alex.p0@example.test")

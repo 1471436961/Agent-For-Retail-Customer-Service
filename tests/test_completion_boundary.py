@@ -20,7 +20,7 @@ from tau2.evaluator.evaluator import evaluate_simulation, EvaluationType
 class CompletionBoundaryTests(unittest.TestCase):
     build = completion.TaskCompletionTests.build
 
-    def run_dialogue(self, kind, *, efficient, max_steps, short_reference=False, review_final=False):
+    def run_dialogue(self, kind, *, efficient, max_steps, short_reference=False):
         self.build(kind, compatibility=not efficient)
         case, params = self.case, self.params
         order = self.runtime.environment.tools.db.orders[case["order_id"]]
@@ -52,8 +52,6 @@ class CompletionBoundaryTests(unittest.TestCase):
         if not efficient and kind == "exchange":
             script.append("Before approving, please explain the supplied exchange process and any real limits.")
         script.append("I approve this exact complete change and settlement. Submit it.")
-        if review_final:
-            schedule[-1:] = ["unmarked_final", "final"]
 
         class Customer:
             def get_init_state(self, message_history=None):
@@ -61,7 +59,7 @@ class CompletionBoundaryTests(unittest.TestCase):
 
             def generate_next_message(self, message, state):
                 if state >= len(script):
-                    raise AssertionError("The Agent did not close the resolved request")
+                    return UserMessage(role="user",content="Thank you. ###STOP###"),state+1
                 return UserMessage(role="user",content=script[state]),state+1
 
             def stop(self, *_args):
@@ -89,7 +87,7 @@ class CompletionBoundaryTests(unittest.TestCase):
                 actual = json.loads(next(m.content for m in reversed(kwargs["messages"]) if m.role == "tool"))["result"]
                 self.assertEqual(actual["state"], "accepted" if kind == "exchange" else "completed")
                 text = "The actual receipt confirms your requested change: " + json.dumps(actual["customer_facts"]) + ". Later refund arrival or shipping is not confirmed."
-                text = text + " Anything else?" if choice == "unmarked_final" else "###COMPLETE### " + text
+                text = "###COMPLETE### " + text
             return AssistantMessage(role="assistant",content=text)
 
         self.model.side_effect = provider
@@ -121,16 +119,16 @@ class CompletionBoundaryTests(unittest.TestCase):
         for kind in ("exchange","modify_items"):
             with self.subTest(kind=kind):
                 simulation,_ = self.run_dialogue(kind,efficient=False,max_steps=100)
-                self.assertEqual(simulation.termination_reason.value,"agent_stop")
-                self.assertTrue(self.agent.is_stop(simulation.messages[-1]))
+                self.assertEqual(simulation.termination_reason.value,"user_stop")
+                self.assertFalse(self.agent.is_stop(simulation.messages[-2]))
 
     def test_explicit_read_batches_finish_both_goals_without_a_preparation_permission_stage(self):
         for kind in ("exchange","modify_items"):
             with self.subTest(kind=kind):
                 simulation,_ = self.run_dialogue(kind,efficient=True,max_steps=16)
-                self.assertEqual(simulation.termination_reason.value,"agent_stop")
-                self.assertEqual(len(simulation.messages),15)
-                self.assertTrue(self.agent.is_stop(simulation.messages[-1]))
+                self.assertEqual(simulation.termination_reason.value,"user_stop")
+                self.assertEqual(len(simulation.messages),16)
+                self.assertFalse(self.agent.is_stop(simulation.messages[-2]))
                 calls = [call.name for m in simulation.messages for call in (getattr(m,"tool_calls",None) or [])]
                 self.assertEqual(calls,["verify_customer","prepare_change","submit_change"])
                 # Identity search remains first; all requested reads follow it.
@@ -157,11 +155,11 @@ class CompletionBoundaryTests(unittest.TestCase):
         self.assertFalse(any(r["path"].startswith("/v1/orders/") for r in self.requests[start:]))
         self.assertEqual(verified["customer_id"],context["customer_id"])
 
-    def test_initial_display_reference_and_internal_review_do_not_spend_host_turns(self):
+    def test_initial_display_reference_keeps_batching_and_customer_can_close(self):
         simulation,_ = self.run_dialogue("exchange",efficient=True,max_steps=16,
-                                        short_reference=True,review_final=True)
-        self.assertEqual(simulation.termination_reason.value,"agent_stop")
-        self.assertEqual(len(simulation.messages),15)
-        self.assertTrue(self.agent.is_stop(simulation.messages[-1]))
-        self.assertEqual(self.model.call_count,8)  # Seven decisions, one unshown-draft review.
+                                        short_reference=True)
+        self.assertEqual(simulation.termination_reason.value,"user_stop")
+        self.assertEqual(len(simulation.messages),16)
+        self.assertFalse(self.agent.is_stop(simulation.messages[-2]))
+        self.assertEqual(self.model.call_count,7)
         self.assertFalse(any("requested_order_error" in (m.content or "") for m in simulation.messages))

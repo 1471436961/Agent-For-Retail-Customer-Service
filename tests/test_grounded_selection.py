@@ -167,7 +167,7 @@ class GroundedSelectionTests(unittest.TestCase):
             "submit_change", {"kind":"modify_items", "parameters":self.params}))
         self.assertEqual(json.loads(received.content)["state"], "completed")
         final = self.decision(received, text=f"There are {count} available variants. The confirmed pending-item modification completed. ###STOP###")
-        self.assertTrue(self.agent.is_stop(final))
+        self.assertFalse(self.agent.is_stop(final))
         self.assertEqual(len(self.writes()), 1)
         _, native, _ = reference_kit()
         apply_native_reference(native.environment.tools, "modify_items", self.case["customer_id"], self.params)

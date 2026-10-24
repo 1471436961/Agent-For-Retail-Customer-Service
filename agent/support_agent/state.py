@@ -2,9 +2,10 @@
 
 from typing import Literal
 import json
-from support_agent.adapters.change_tools import EXECUTE_ACTIONS, DIRECT_ACTION
+from support_agent.adapters.change_tools import EXECUTE_ACTIONS, DIRECT_ACTION, BATCH_DIRECT_ACTION
 from support_agent.adapters.conversation_api import TRANSFER_NOTICE
 from support_agent.domain.gateway_failure import GatewayDiagnostic
+from support_agent.adapters.change_parameters import validate_change_shape
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from tau2.data_model.message import (
@@ -78,7 +79,19 @@ def bind_submission_reference(state, reply):
         return reply
     calls = []
     for call in reply.tool_calls:
-        if call.name == DIRECT_ACTION:
+        if call.name == BATCH_DIRECT_ACTION and isinstance(call.arguments.get("requests"), list):
+            rows = []
+            for row in call.arguments["requests"]:
+                if isinstance(row, dict):
+                    row = dict(row)
+                    params = row.get("parameters")
+                    target = params.get("order_id") if isinstance(params, dict) else None
+                    if row.get("kind") == "default_address":
+                        target = state.verified_customer_id
+                    row["request_id"] = submission_reference(state, row.get("kind"), target)
+                rows.append(row)
+            call = call.model_copy(update={"arguments": {**call.arguments, "requests": rows}})
+        elif call.name == DIRECT_ACTION:
             arguments = dict(call.arguments)
             params = arguments.get("parameters")
             target = params.get("order_id") if isinstance(params, dict) else None
@@ -99,6 +112,50 @@ def unanswered_quotes(state):
         return []
     return [proposal for identifier, proposal in state.proposals.items()
             if proposal["state"] == "prepared" and identifier not in state.quote_response_turns]
+
+
+def _record_quote(state, body):
+    identifier = body.get("proposal_id")
+    if body.get("state") != "prepared" or not isinstance(identifier, str) or not isinstance(body.get("facts"), dict):
+        return
+    if state.proposals.get(identifier) == body:
+        if identifier not in state.quote_response_turns:
+            state.quote_response_pending = body
+        return
+    for previous_id, previous in state.proposals.items():
+        if (previous["facts"].get("order_id") == body["facts"].get("order_id") and previous.get("state") == "prepared"
+                and previous["facts"].get("kind") == body["facts"].get("kind")):
+            state.quote_response_turns.pop(previous_id, None)
+            previous["state"] = "superseded"
+    state.proposals[identifier] = body
+    state.quote_response_pending = body
+
+
+def _retire_quotes(state, body):
+    for identifier in body.get("superseded_proposal_ids", []):
+        if identifier in state.proposals and state.proposals[identifier]["state"] == "prepared":
+            state.proposals[identifier]["state"] = "superseded"
+            state.quote_response_turns.pop(identifier, None)
+
+
+def _record_submission(state, arguments, body):
+    identifier = arguments["request_id"]
+    state.submissions[identifier] = {"kind": arguments["kind"],
+        "order_id": arguments["parameters"].get("order_id"),
+        "state": body.get("state", "unknown"), "proposal_id": body.get("proposal_id")}
+    if isinstance(body.get("customer_facts"), dict):
+        state.receipt_facts_to_display.append(body["customer_facts"])
+    for proposal_id, proposal in state.proposals.items():
+        if proposal["facts"]["order_id"] == state.submissions[identifier]["order_id"] and proposal["state"] == "prepared":
+            if proposal["facts"]["kind"] == arguments["kind"]:
+                proposal["state"] = body.get("state", "unknown") if proposal_id == body.get("proposal_id") else "superseded"
+                state.quote_response_turns.pop(proposal_id, None)
+            elif (body.get("state") in {"accepted", "completed"} and
+                  arguments["kind"] in {"cancel", "modify_items", "return", "exchange"}):
+                proposal["state"] = "superseded"
+                state.quote_response_turns.pop(proposal_id, None)
+    if state.quote_response_pending and state.quote_response_pending["facts"]["order_id"] == state.submissions[identifier]["order_id"]:
+        state.quote_response_pending = None
 
 
 def receive(state, message):
@@ -153,25 +210,13 @@ def receive(state, message):
                     state.customer_profile_loaded = True
                     state.customer_email = body["email"]
                     state.customer_evidence_id = result.id
-            elif call["name"] in {"prepare_change", "prepare_plan_step"} and body.get("state") == "prepared":
-                identifier = body.get("proposal_id")
-                if isinstance(identifier, str) and isinstance(body.get("facts"), dict):
-                    if state.proposals.get(identifier) == body:
-                        # An unchanged quote read does not reset the actual
-                        # earlier response or force another customer approval.
-                        if identifier not in state.quote_response_turns:
-                            state.quote_response_pending = body
-                        continue
-                    target = body["facts"].get("order_id")
-                    for previous_id, previous in state.proposals.items():
-                        if (previous["facts"].get("order_id") == target and previous.get("state") == "prepared"
-                                and previous["facts"].get("kind") == body["facts"].get("kind")):
-                            state.quote_response_turns.pop(previous_id, None)
-                            previous["state"] = "superseded"
-                    state.proposals[identifier] = body
-                    # The successful preparation already contains the complete
-                    # verified proposal. No second tool read is required to show it.
-                    state.quote_response_pending = body
+            elif call["name"] in {"prepare_change", "prepare_plan_step"}:
+                _record_quote(state, body)
+                _retire_quotes(state, body)
+            elif call["name"] == "prepare_changes":
+                for proposal in body.get("changes", []):
+                    _record_quote(state, proposal)
+                _retire_quotes(state, body)
             elif call["name"] == "review_change":
                 proposal = body.get("review")
                 identifier = call["arguments"].get("proposal_id")
@@ -202,22 +247,12 @@ def receive(state, message):
                 if isinstance(body.get("customer_facts"), dict):
                     state.receipt_facts_to_display.append(body["customer_facts"])
             elif call["name"] == DIRECT_ACTION:
-                identifier = call["arguments"]["request_id"]
-                state.submissions[identifier] = {"kind": call["arguments"]["kind"],
-                    "order_id": call["arguments"]["parameters"].get("order_id"),
-                    "state": body.get("state", "unknown"), "proposal_id": body.get("proposal_id")}
-                if isinstance(body.get("customer_facts"), dict):
-                    state.receipt_facts_to_display.append(body["customer_facts"])
-                # A direct submission supersedes the unattempted draft of the
-                # same target in the toolkit; do not subsequently display it.
-                for proposal_id, proposal in state.proposals.items():
-                    if (proposal["facts"]["order_id"] == state.submissions[identifier]["order_id"]
-                            and proposal["facts"]["kind"] == call["arguments"]["kind"]
-                            and proposal["state"] == "prepared"):
-                        proposal["state"] = body.get("state", "unknown") if proposal_id == body.get("proposal_id") else "superseded"
-                        state.quote_response_turns.pop(proposal_id, None)
-                if state.quote_response_pending and state.quote_response_pending["facts"]["order_id"] == state.submissions[identifier]["order_id"]:
-                    state.quote_response_pending = None
+                _record_submission(state, call["arguments"], body)
+            elif call["name"] == BATCH_DIRECT_ACTION:
+                pending = {row["request_id"]: row for row in call["arguments"]["requests"]}
+                for row in body.get("results", []):
+                    if row.get("request_id") in pending:
+                        _record_submission(state, pending[row["request_id"]], row["outcome"])
             elif call["name"] == "inspect_change_result":
                 identifier = call["arguments"].get("proposal_id")
                 outcome = body.get("write_outcome")
@@ -286,6 +321,14 @@ def record_reply(state, reply, actions, *, live=False):
         properties = tool.params.model_json_schema().get("properties", {})
         if set(call.arguments) - set(properties):
             raise ProtocolError("Unexpected tool argument")
+        if live and call.name in {"prepare_change", DIRECT_ACTION, "prepare_changes", BATCH_DIRECT_ACTION}:
+            try:
+                rows = call.arguments.get("requests", []) if call.name in {"prepare_changes", BATCH_DIRECT_ACTION} else [call.arguments]
+                for row in rows:
+                    if isinstance(row, dict):
+                        validate_change_shape(row.get("kind"), row.get("parameters"))
+            except ValueError as error:
+                raise ProtocolError(str(error)) from None
         try:
             tool.params.model_validate(call.arguments, strict=True)
         except ValueError as error:
@@ -297,18 +340,20 @@ def record_reply(state, reply, actions, *, live=False):
     if len(calls) > 1 and any(call.name in {"verify_customer", "lookup_customer"} for call in calls):
         # Verification changes toolkit identity; dependent reads wait for its result.
         raise ProtocolError("Verification must use its own tool batch")
-    exclusive = {"prepare_change", "review_change", "invalidate_change", "plan_changes", "prepare_plan_step", "abandon_plan", "inspect_change_result", "transfer_to_human", DIRECT_ACTION, *EXECUTE_ACTIONS}
+    exclusive = {"prepare_change", "prepare_changes", "review_change", "invalidate_change", "plan_changes", "prepare_plan_step", "abandon_plan", "inspect_change_result", "transfer_to_human", DIRECT_ACTION, BATCH_DIRECT_ACTION, *EXECUTE_ACTIONS}
     if len(calls) > 1 and any(call.name in exclusive for call in calls):
         raise ProtocolError("State-changing or dependent actions require a single-call batch")
     for call in calls:
         if state.handoff in {"accepted", "unknown"}:
             raise ProtocolError("Terminal handoff forbids further tool calls")
-        if call.name == DIRECT_ACTION and not has_prior_assistant_turn(state):
+        if call.name in {DIRECT_ACTION, BATCH_DIRECT_ACTION} and not has_prior_assistant_turn(state):
             raise ProtocolError("A submitted change needs an earlier assistant response and later customer input; the model must establish the exact recap and consent")
-        if call.name == DIRECT_ACTION:
-            previous = state.submissions.get(call.arguments.get("request_id"), {})
-            if previous.get("state") in {"accepted", "completed", "attempted", "pending", "unknown"}:
-                raise ProtocolError("This operation already has an actual write outcome for this customer turn. Report its receipt; do not submit it again through another tool")
+        if call.name in {DIRECT_ACTION, BATCH_DIRECT_ACTION}:
+            rows = call.arguments["requests"] if call.name == BATCH_DIRECT_ACTION else [call.arguments]
+            for row in rows:
+                previous = state.submissions.get(row.get("request_id"), {})
+                if previous.get("state") in {"accepted", "completed", "attempted", "pending", "unknown"}:
+                    raise ProtocolError("This operation already has an actual write outcome for this customer turn. Report its receipt; do not submit it again through another tool")
         if call.name in EXECUTE_ACTIONS:
             identifier = call.arguments.get("proposal_id")
             proposal = state.proposals.get(identifier)

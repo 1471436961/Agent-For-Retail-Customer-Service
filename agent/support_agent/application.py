@@ -9,8 +9,7 @@ from tau2.data_model.message import AssistantMessage, SystemMessage
 from support_agent.adapters.conversation_api import TRANSFER_NOTICE
 from support_agent.domain.gateway_failure import diagnose_gateway_failure
 from support_agent.domain.reply import (
-    REPLY_INSTRUCTIONS, COMPLETION_REVIEW, response_content,
-    has_completion_decision, output_was_truncated,
+    REPLY_INSTRUCTIONS, response_content, output_was_truncated,
 )
 from support_agent.progress import evidence_view, unresolved_operations
 from support_agent.domain.policy import business_rules
@@ -82,16 +81,6 @@ class RetailAgent:
                         current.request_tool_rounds >= self.gateway.limits.max_tool_rounds):
                     return self._stop(current, "tool_round_limit")
                 if isinstance(reply, AssistantMessage) and not reply.tool_calls and reply.content:
-                    # A receipt is evidence, not completion. If the model forgot
-                    # to decide, ask it once within this SAME host turn. Never
-                    # auto-finish, parse customer wording, or display two replies.
-                    if (attempt == 0 and current.receipt_facts_to_display and
-                            not unresolved_operations(current) and
-                            not has_completion_decision(reply.content) and
-                            current.model_calls < self.gateway.limits.max_model_calls):
-                        messages = [*messages, SystemMessage(role="system", timestamp=None,
-                            content=COMPLETION_REVIEW + json.dumps(reply.content, ensure_ascii=False))]
-                        continue
                     try:
                         text, complete = response_content(reply.content)
                     except ValueError as error:
@@ -126,15 +115,20 @@ class RetailAgent:
 
     @staticmethod
     def is_stop(message):
-        """The documented native hook; completion is explicitly model-chosen."""
+        """Only a real accepted handoff ends the agent side of the dialogue.
+
+        Operation completion does not establish that the customer is finished.
+        The native user simulator owns ordinary USER_STOP; no wording parser or
+        early Agent stop hides later corrections, follow-up work or complaints.
+        """
         return (isinstance(message, AssistantMessage) and not message.tool_calls and
-                bool(message.raw_data and message.raw_data.get("retail_service_complete") is True))
+                bool(message.raw_data and message.raw_data.get("retail_handoff_complete") is True))
 
     @staticmethod
     def _handoff_reply(state):
         text = TRANSFER_NOTICE if state.handoff == "accepted" else "The transfer outcome is unknown. I will stop automated operations and will not retry it."
         reply = AssistantMessage(role="assistant", content=text, timestamp=None,
-                                 raw_data={"retail_service_complete": state.handoff == "accepted"})
+                                 raw_data={"retail_handoff_complete": state.handoff == "accepted"})
         record_reply(state, reply, {})
         return reply, state.model_dump(mode="json")
 

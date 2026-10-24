@@ -10,11 +10,11 @@ from pydantic import Field, create_model
 
 from tau2.data_model.message import MultiToolMessage, ToolMessage
 from support_agent.state import decode, has_prior_assistant_turn
-from support_agent.adapters.change_tools import ACTION_NAMES, EXECUTE_ACTIONS, DIRECT_ACTION
+from support_agent.adapters.change_tools import ACTION_NAMES, EXECUTE_ACTIONS, DIRECT_ACTION, BATCH_DIRECT_ACTION
 from support_agent.config import PREFERRED_MODEL
 from support_agent.domain.money import ArithmeticOperation
 from support_agent.domain.presentation import proposal_view
-from support_agent.adapters.change_parameters import ChangeParameters
+from support_agent.adapters.change_parameters import ChangeParameters, PlanRequest, SubmissionRequest
 
 
 @dataclass(frozen=True)
@@ -41,6 +41,7 @@ class GatewayAdapter:
         self.limits = AgentLimits.from_runtime(context.runtime_config)
         self.actions = context.action_interface.select(ACTION_NAMES)
         self.actions_by_name = {action.name: action for action in self.actions}
+        self._grounded_cache = {}
         # Keep original schemas for legitimate historical calls. Live inference
         # must explicitly choose a claimed ID or null, never silently omit it.
         # The redundant legacy lookup remains callable/restorable, but is not
@@ -68,19 +69,21 @@ class GatewayAdapter:
         self.compatibility_actions = self.live_actions
         live_names = {"verify_customer", "get_customer_summary", "list_customer_orders",
                       "get_owned_order", "list_products", "read_products", "read_context",
-                      "get_catalog_summary", "calculate", "prepare_change",
-                      "submit_change", "invalidate_change", "inspect_change_result",
+                      "get_catalog_summary", "calculate", "prepare_change", "prepare_changes",
+                      "submit_change", "submit_changes", "invalidate_change", "inspect_change_result",
                       "get_service_status", "transfer_to_human"}
         self.live_actions = tuple(action for action in self.live_actions if action.name in live_names)
         descriptions = {
             "verify_customer": "Independently verify by email OR full first/last name and postal code; match a supplied customer ID before profile details. Include the already-named order_id; for its item changes/exchange select include_product_variants=true for related catalogs. For order discovery select include_order_details=true. product_names selects explicitly requested catalog names/counts. All optional reads happen AFTER verification and return actual requested_order/requested_context records. No permission to read is needed. Reuse those records. Use null claimed_customer_id only when absent. Profile failure preserves verification; recover via get_customer_summary.",
             "get_owned_order": "Read one exact owned order ID, checking membership and owner. Preserve #. Returns items, status and payments. For item-change/exchange requests, include_product_variants=true batches this order's related catalogs. Otherwise select relevant product IDs for read_products/read_context. Reuse actual records already returned.",
-            "prepare_change": "READ ONLY: obtain an optional quote before explaining a proposed change. It changes no business data. No permission to prepare is needed. After an accurate recap and clear approval, use submit_change instead, even if no quote was prepared. parameters describe the complete change; preserve_options belong to each replacement row. Select order_id exactly from the verified records.",
+            "prepare_change": "READ ONLY: obtain a grounded quote before explaining a change. No permission to prepare is needed. parameters MUST match kind: address operations need address, not replacements/payment. Use supersedes to replace old unsubmitted drafts on this target in the SAME call; no prior invalidation needed. A subset of unchanged quoted rows can reuse their component calculations. After approval use submit_change. Select exact observed IDs.",
             "submit_change": "WRITE: submit the exact complete change already explained and clearly approved in a later customer reply. This performs one real business API write after fresh checks. Use it immediately on approval; prepare_change would only quote again. No proposal ID or extra confirmation is required. parameters use the actual observed IDs, saved settlement method and ordered item occurrences. A question alone or unmet condition is not consent. Never retry an uncertain write. request_id is filled by the Agent.",
         }
         self.live_actions = tuple(action.model_copy(update={
-            "params": create_model("Focused" + action.name, **{
-                key: (field.annotation, deepcopy(field)) for key, field in action.params.model_fields.items()
+            "params": create_model("Focused" + action.name,
+                __base__=PlanRequest if action.name in {"prepare_change", DIRECT_ACTION} else None, **{
+                key: (field.annotation, deepcopy(PlanRequest.model_fields["parameters"] if key == "parameters" else field))
+                for key, field in action.params.model_fields.items()
             }),
             "short_desc": descriptions[action.name], "long_desc": "",
         }) if action.name in descriptions else action for action in self.live_actions)
@@ -131,8 +134,11 @@ class GatewayAdapter:
             actions = tuple(action for action in self.live_actions
                          if action.name != "verify_customer"
                          if (action.name not in EXECUTE_ACTIONS or EXECUTE_ACTIONS[action.name] in ready_kinds)
-                         and (action.name != DIRECT_ACTION or has_prior_assistant_turn(state)))
-            return self._ground_order_ids(actions, state.owned_order_ids)
+                         and (action.name not in {DIRECT_ACTION, BATCH_DIRECT_ACTION} or has_prior_assistant_turn(state)))
+            key = (tuple(action.name for action in actions), tuple(state.owned_order_ids or []))
+            if key not in self._grounded_cache:
+                self._grounded_cache[key] = self._ground_order_ids(actions, state.owned_order_ids)
+            return self._grounded_cache[key]
         return tuple(action for action in self.live_actions if action.name in {
             "verify_customer", "transfer_to_human",
         })
@@ -153,6 +159,10 @@ class GatewayAdapter:
         changes = variants[0]
         for variant in variants[1:]:
             changes = changes | variant
+        quote_request = create_model("OwnedPlanRequest", __base__=PlanRequest,
+                                     parameters=(changes, deepcopy(PlanRequest.model_fields["parameters"])))
+        submission_request = create_model("OwnedSubmissionRequest", __base__=SubmissionRequest,
+                                          parameters=(changes, deepcopy(SubmissionRequest.model_fields["parameters"])))
         result = []
         for action in actions:
             fields = {}
@@ -161,7 +171,11 @@ class GatewayAdapter:
             elif action.name == "read_context":
                 fields["order_ids"] = (list[order_id] | None, Field(default=None))
             elif action.name in {"prepare_change", "submit_change"}:
-                fields["parameters"] = (changes, Field(...))
+                fields["parameters"] = (changes, deepcopy(PlanRequest.model_fields["parameters"]))
+            elif action.name == "prepare_changes":
+                fields["requests"] = (list[quote_request], Field(...))
+            elif action.name == BATCH_DIRECT_ACTION:
+                fields["requests"] = (list[submission_request], Field(...))
             result.append(action.model_copy(update={"params": create_model(
                 "Grounded" + action.name, __base__=action.params, **fields)}) if fields else action)
         return tuple(result)
@@ -199,8 +213,9 @@ class GatewayAdapter:
                     def compact(proposal):
                         view = proposal_view(proposal)
                         view["parameters"] = proposal["parameters"]
-                        if "outcome" in proposal:
-                            view["outcome"] = proposal["outcome"]
+                        for key in ("outcome", "superseded_proposal_ids"):
+                            if key in proposal:
+                                view[key] = proposal[key]
                         return view
                     if isinstance(actual, dict):
                         if {"proposal_id", "facts", "parameters"} <= actual.keys():

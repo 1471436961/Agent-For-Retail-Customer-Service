@@ -1,7 +1,7 @@
 """Host-executed tools with one bounded correction of an invalid model reply."""
 
 from support_agent.gateway import GatewayAdapter
-from support_agent.prompts import IDENTITY_PROMPT, SYSTEM_PROMPT, SERVICE_GOALS
+from support_agent.prompts import IDENTITY_PROMPT, SYSTEM_PROMPT, SERVICE_GOALS, NEXT_DECISION
 from support_agent.state import (
     ProtocolError, SessionState, initial_state, receive, record_reply, restore_history, receipt_text, store, normalize_call_ids, bind_submission_reference,
 )
@@ -51,6 +51,7 @@ class RetailAgent:
                 prompt += "\nApplicable business rules from the supplied materials: " + json.dumps(business_rules(), ensure_ascii=False)
             if current.verified_customer_id:
                 prompt += "\nRecorded evidence and outcomes: " + json.dumps(evidence_view(current))
+                prompt += NEXT_DECISION
             actions = self.gateway.actions_for(current)
             messages = [SystemMessage(role="system", content=prompt + REPLY_INSTRUCTIONS, timestamp=None),
                         *self.gateway.project_history(current.history)]

@@ -4,6 +4,7 @@ import json
 from copy import deepcopy
 from dataclasses import dataclass
 from itertools import product
+from typing import Literal, get_args
 import re
 from pydantic import Field, create_model
 
@@ -13,6 +14,7 @@ from support_agent.adapters.change_tools import ACTION_NAMES, EXECUTE_ACTIONS, D
 from support_agent.config import PREFERRED_MODEL
 from support_agent.domain.money import ArithmeticOperation
 from support_agent.domain.presentation import proposal_view
+from support_agent.adapters.change_parameters import ChangeParameters
 
 
 @dataclass(frozen=True)
@@ -65,7 +67,7 @@ class GatewayAdapter:
         # compatibility tests. New decisions have one business write channel.
         self.compatibility_actions = self.live_actions
         live_names = {"verify_customer", "get_customer_summary", "list_customer_orders",
-                      "get_owned_order", "list_products", "read_products", "get_product_variants",
+                      "get_owned_order", "list_products", "read_products",
                       "get_catalog_summary", "calculate", "get_service_policy", "prepare_change",
                       "submit_change", "invalidate_change", "inspect_change_result",
                       "get_service_status", "transfer_to_human"}
@@ -73,6 +75,8 @@ class GatewayAdapter:
         descriptions = {
             "verify_customer": "Independently verify by email OR full first/last name and postal code; match a supplied customer ID before profile details. Optionally read the explicitly named owned order. No catalogs are loaded. Use null claimed_customer_id only when none was supplied. Profile failure preserves verification, recover via get_customer_summary.",
             "get_owned_order": "Read one exact owned order ID, checking membership and owner. Preserve #. Returns items, status and payments; no unrelated catalogs. Select product IDs from these records for read_products. Apply the supplied business rules.",
+            "prepare_change": "READ ONLY: obtain an optional quote before explaining a proposed change. It changes no business data. No permission to prepare is needed. After an accurate recap and clear approval, use submit_change instead, even if no quote was prepared. parameters describe the complete change; preserve_options belong to each replacement row. Select order_id exactly from the verified records.",
+            "submit_change": "WRITE: submit the exact complete change already explained and clearly approved in a later customer reply. This performs one real business API write after fresh checks. Use it immediately on approval; prepare_change would only quote again. No proposal ID or extra confirmation is required. parameters use the actual observed IDs, saved settlement method and ordered item occurrences. A question alone or unmet condition is not consent. Never retry an uncertain write. request_id is filled by the Agent.",
         }
         self.live_actions = tuple(action.model_copy(update={
             "params": create_model("Focused" + action.name, **{
@@ -124,12 +128,41 @@ class GatewayAdapter:
             ready_kinds = {p["facts"]["kind"] for key, p in state.proposals.items()
                            if p["state"] == "prepared" and key in state.quote_response_turns
                            and state.user_turn > state.quote_response_turns[key]}
-            return tuple(action for action in self.live_actions
+            actions = tuple(action for action in self.live_actions
+                         if action.name != "verify_customer"
                          if (action.name not in EXECUTE_ACTIONS or EXECUTE_ACTIONS[action.name] in ready_kinds)
                          and (action.name != DIRECT_ACTION or has_prior_assistant_turn(state)))
+            return self._ground_order_ids(actions, state.owned_order_ids)
         return tuple(action for action in self.live_actions if action.name in {
             "verify_customer", "transfer_to_human",
         })
+
+    @staticmethod
+    def _ground_order_ids(actions, identifiers):
+        """Constrain selection to observed IDs, without normalizing or choosing one.
+
+        The toolkit independently checks current ownership at execution. This
+        schema catches a model's misspelled parameter before a host tool round.
+        """
+        if not identifiers:
+            return actions
+        order_id = Literal[tuple(dict.fromkeys(identifiers))]
+        variants = tuple(create_model("Owned" + model.__name__, __base__=model,
+            order_id=(order_id, Field(..., description="Exact ID from the verified customer's own order_ids; keep every character.")))
+            if "order_id" in model.model_fields else model for model in get_args(ChangeParameters))
+        changes = variants[0]
+        for variant in variants[1:]:
+            changes = changes | variant
+        result = []
+        for action in actions:
+            fields = {}
+            if action.name == "get_owned_order":
+                fields["order_id"] = (order_id, Field(...))
+            elif action.name in {"prepare_change", "submit_change"}:
+                fields["parameters"] = (changes, Field(...))
+            result.append(action.model_copy(update={"params": create_model(
+                "Grounded" + action.name, __base__=action.params, **fields)}) if fields else action)
+        return tuple(result)
 
     def request_summary(self, messages, actions, model_call):
         # Serialize only to measure the candidate-visible wire size. No message,

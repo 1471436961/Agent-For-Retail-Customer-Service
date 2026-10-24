@@ -5,6 +5,7 @@ def evidence_view(state):
     return {
         "verified_customer": state.verified_customer_id,
         "profile_loaded": state.customer_profile_loaded,
+        "owned_order_ids": state.owned_order_ids,
         "current_customer_turn": state.user_turn,
         "quotes": [{"id": key, "kind": p["facts"]["kind"], "order_id": p["facts"]["order_id"],
                     "state": p["state"],

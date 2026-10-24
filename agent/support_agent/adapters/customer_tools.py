@@ -225,23 +225,44 @@ class CustomerTools(ClientAPIToolKitBase):
         return result
 
     @is_tool(ToolType.READ)
-    def read_products(self, product_ids: list[str]) -> dict:
+    def read_products(self, product_ids: list[str] | None = None,
+                      product_names: list[str] | None = None) -> dict:
         """Read explicitly selected products' variants, prices and counts.
 
-        Select actual product IDs from orders or list_products. Only these
+        Select actual product IDs from orders or list_products, or supply exact
+        catalog product names. Name selection reads the catalog index and uses
+        case-insensitive exact equality, never fuzzy matching or language parsing.
+        If a name is missing or ambiguous, no product is guessed. Only these
         catalogs are fetched in one host action; unrelated order products are
         not loaded. Every record must succeed, with no falsely complete partial
         result. This is read-only and needs no customer permission.
         """
-        if not isinstance(product_ids, list) or not product_ids:
-            raise ReadError("product_ids_required")
-        identifiers = [resource_id(identifier) for identifier in product_ids]
         with self._lock:
+            self._customer_id()
+            identifiers = self._selected_product_ids(product_ids, product_names)
             products = {}
             for identifier in identifiers:
                 if identifier not in products:
                     products[identifier] = self.get_product_variants(identifier)
             return {"products": list(products.values())}
+
+    def _selected_product_ids(self, product_ids, product_names):
+        if ((product_ids is not None and not isinstance(product_ids, list)) or
+                (product_names is not None and not isinstance(product_names, list))):
+            raise ReadError("invalid_catalog_selection")
+        identifiers = [resource_id(value) for value in (product_ids or [])]
+        if product_names:
+            if any(not isinstance(name, str) or not name.strip() for name in product_names):
+                raise ReadError("invalid_catalog_selection")
+            catalog = read_products(self.client_api)["products"]
+            for name in product_names:
+                matches = [row["product_id"] for row in catalog if row["name"].casefold() == name.strip().casefold()]
+                if len(matches) != 1:
+                    raise ReadError("catalog_name_not_unique_use_list_products")
+                identifiers.append(matches[0])
+        if not identifiers:
+            raise ReadError("product_ids_or_names_required")
+        return list(dict.fromkeys(identifiers))
 
     @is_tool(ToolType.READ)
     def list_products(self) -> dict:
@@ -283,19 +304,24 @@ class CustomerTools(ClientAPIToolKitBase):
             return read_catalog_item(self.client_api, item_id)
 
     @is_tool(ToolType.READ)
-    def get_catalog_summary(self, product_id: str = "") -> dict:
+    def get_catalog_summary(self, product_id: str = "", product_name: str = "") -> dict:
         """Count product types, total variants and available variants separately.
 
-        For a named product, first find its real ID, then pass product_id to
-        count that product only (e.g. available T-shirt variants). Empty
-        product_id counts the whole store using every product's details.
+        For a named product, pass its known product_id OR exact catalog
+        product_name. A name is selected from the real index by case-insensitive
+        exact equality; there is no guessing. This avoids a separate model turn
+        just to read the name/ID index. Both empty counts the whole store.
         Counts are derived
         from actual records; they are tool output fields, not additional REST
         fields. Failure yields no partial or hardcoded count. Performs no writes.
         """
         with self._lock:
             self._customer_id()
-            ids = ([resource_id(product_id)] if product_id else
+            if product_id and product_name:
+                raise ReadError("choose_catalog_id_or_name")
+            ids = (self._selected_product_ids([product_id] if product_id else None,
+                                             [product_name] if product_name else None)
+                   if product_id or product_name else
                    [product["product_id"] for product in read_products(self.client_api)["products"]])
             if len(ids) != len(set(ids)):
                 raise ReadError("invalid_read_response", operation="listProducts")

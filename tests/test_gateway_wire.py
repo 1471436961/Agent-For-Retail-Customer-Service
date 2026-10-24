@@ -89,7 +89,8 @@ class GatewayWireTests(unittest.TestCase):
     def test_reused_provider_id_has_matching_results_in_both_wire_rounds(self):
         customer = self.backend.records["customers"][0]
         self.provider.side_effect = [completion(arguments={"email": customer["email"]}),
-                                    completion(arguments={"email": customer["email"]}),
+                                    completion(calls=[{"id":"wire-verify", "type":"function", "function":{
+                                        "name":"get_customer_summary", "arguments":"{}"}}]),
                                     completion(content="The account email is " + customer["email"])]
         reply, state = self.agent.generate_next_message(self.user, self.agent.get_init_state())
         ids = []
@@ -124,13 +125,14 @@ class GatewayWireTests(unittest.TestCase):
             definitions = schema["$defs"]
             self.assertEqual(definitions["Address"]["required"],
                              ["address_line_1", "city", "region", "country", "postal_code"])
-            self.assertTrue(definitions["CancellationParameters"]["additionalProperties"] is False)
-            self.assertEqual(definitions["ReplacementParameters"]["required"],
+            prefix = "Owned" if name == "prepare_change" else ""
+            self.assertTrue(definitions[prefix + "CancellationParameters"]["additionalProperties"] is False)
+            self.assertEqual(definitions[prefix + "ReplacementParameters"]["required"],
                              ["order_id", "payment_method_id", "replacements"])
             self.assertEqual(definitions["ReplacementChoice"]["required"],
                              ["existing_item_id", "replacement_item_id"])
             self.assertEqual(definitions["ReplacementChoice"]["properties"]["preserve_options"]["type"], "array")
-            self.assertIn("refund_payment_method_id", definitions["ReturnParameters"]["required"])
+            self.assertIn("refund_payment_method_id", definitions[prefix + "ReturnParameters"]["required"])
 
     def test_real_wire_host_verification_then_customer_facts(self):
         customer = self.backend.records["customers"][0]

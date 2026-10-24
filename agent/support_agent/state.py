@@ -36,6 +36,7 @@ class SessionState(BaseModel):
     customer_profile_loaded: bool = False
     customer_email: str | None = None
     customer_evidence_id: str | None = None
+    owned_order_ids: list[str] | None = None
     evidence_call_ids: list[str] = Field(default_factory=list)
     pending_calls: list[dict] = Field(default_factory=list)
     proposals: dict[str, dict] = Field(default_factory=dict)
@@ -249,6 +250,15 @@ def receive(state, message):
                     state.quote_response_pending = None
                 if call["name"] == "transfer_to_human":
                     state.handoff = body.get("state")
+            # Only successful tools for this verified account establish exact
+            # owned IDs. Error-flagged results and customer text never do so.
+            if (state.verified_customer_id and
+                    call["name"] in {"verify_customer", "lookup_customer", "get_customer_summary", "list_customer_orders"}
+                    and isinstance(body.get("order_ids"), list)
+                    and all(isinstance(value, str) and value for value in body["order_ids"])
+                    and (call["name"] == "list_customer_orders" or
+                         body.get("customer_id") == state.verified_customer_id)):
+                state.owned_order_ids = list(body["order_ids"])
         state.pending_calls = []
     else:
         raise ProtocolError("Host input must be a user or tool result")
@@ -279,6 +289,9 @@ def record_reply(state, reply, actions, *, live=False):
         try:
             tool.params.model_validate(call.arguments, strict=True)
         except ValueError as error:
+            if any(issue["type"] == "literal_error" and issue["loc"][-1:] == ("order_id",)
+                   for issue in error.errors()):
+                raise ProtocolError("order_id must be selected exactly from the verified account's returned order IDs in the tool schema. Do not remove or add punctuation, guess an ID or scan every order to repair an ID spelling") from error
             raise ProtocolError("Arguments do not match tool schema") from error
     if len(calls) > 1 and any(call.name in {"verify_customer", "lookup_customer"} for call in calls):
         # Verification changes toolkit identity; dependent reads wait for its result.

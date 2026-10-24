@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from support_agent.adapters.read_models import Record, Address, OrderCancellation, OrderPayment, OrderItem, OrderReturn, OrderExchange
 from typing import Literal
 from support_agent.adapters.response_values import normalize_response, ResponseValueError, validation_issues
+from support_agent.adapters.workflow_api import accepted_workflow, poll_workflow
 
 
 class DefaultAddressResult(Record):
@@ -61,19 +62,44 @@ OPERATIONS = {
 
 
 def write_once(api, facts):
-    operation, method, template, model = OPERATIONS[facts["kind"]]
+    operation, method, template, _ = OPERATIONS[facts["kind"]]
     identifier = facts["customer_id"] if facts["kind"] == "default_address" else facts["order_id"]
     try:
         response = api.request(method, template.format(quote(identifier, safe="")), body=deepcopy(facts["body"]))
     except Exception:
         return {"state": "unknown", "operation": operation, "error": "write_transport_failure"}
+    if response.status_code == 202:
+        try:
+            workflow = accepted_workflow(response, facts)
+        except (ValueError, TypeError, OverflowError):
+            return {"state": "unknown", "operation": operation, "http_status": 202,
+                    "error": "invalid_async_write_receipt"}
+        return resume_workflow(api, facts, workflow)
     if response.status_code != 200:
         # Capacity/structure/business rejections are definite failures. Server or
         # unexpected statuses may have committed; never assume a safe retry.
         return {"state": "failed" if response.status_code in {400, 404, 405, 409, 413, 422} else "unknown",
                 "operation": operation, "http_status": response.status_code, "error": "write_http_failure"}
+    return validate_receipt(facts, response.body)
+
+
+def resume_workflow(api, facts, workflow):
+    progress = poll_workflow(api, workflow)
+    operation = OPERATIONS[facts["kind"]][0]
+    if progress["state"] == "succeeded":
+        outcome = validate_receipt(facts, progress["result"])
+        outcome["workflow"] = progress["workflow"]
+        outcome["workflow_status"] = "succeeded"
+        return outcome
+    return {"operation": operation, **progress}
+
+
+def validate_receipt(facts, body):
+    """Validate the same target, amounts and items for sync/async/read-back results."""
+    operation, _, _, model = OPERATIONS[facts["kind"]]
+    identifier = facts["customer_id"] if facts["kind"] == "default_address" else facts["order_id"]
     try:
-        actual, warnings = normalize_response(response.body)
+        actual, warnings = normalize_response(body)
         model.model_validate(actual)
         key = "customer_id" if facts["kind"] == "default_address" else "order_id"
         if actual[key] != identifier:
@@ -96,6 +122,20 @@ def write_once(api, facts):
     outcome = {"state": "accepted" if facts["kind"] in {"return", "exchange"} else "completed", "operation": operation, "receipt": deepcopy(actual)}
     if warnings:
         outcome["response_warnings"] = warnings
+    return outcome
+
+
+def observed_receipt(facts, record):
+    """Check current business state, retaining uncertainty if it does not match.
+
+    This confirms only the observed matching record, not which actor wrote it.
+    Extra read-only order fields are not mistaken for write-response fields.
+    """
+    model = OPERATIONS[facts["kind"]][3]
+    projected = {key: deepcopy(record[key]) for key in model.model_fields if key in record}
+    outcome = validate_receipt(facts, projected)
+    if outcome["state"] in {"accepted", "completed"}:
+        outcome["verification"] = "observed_matching_business_record"
     return outcome
 
 

@@ -7,7 +7,7 @@ from support_agent.domain.catalog import compare
 from support_agent.domain.changes import prepare, execution_evidence
 from support_agent.domain.identity import ReadError
 from support_agent.domain.money import calculate_values
-from support_agent.adapters.write_api import write_once
+from support_agent.adapters.write_api import write_once, resume_workflow, observed_receipt
 from support_agent.adapters.conversation_api import transfer_once
 from support_agent.domain.plans import order_requests
 from support_agent.domain.receipts import customer_facts
@@ -130,13 +130,13 @@ class ChangeTools(CustomerTools):
         with self._lock:
             self._customer_id()
             target = parameters.get("order_id") if kind != "default_address" else None
-            if any(p["state"] in {"attempted", "unknown"} and p["facts"]["order_id"] == target for p in self._proposals.values()):
+            if any(p["state"] in {"attempted", "pending", "unknown"} and p["facts"]["order_id"] == target for p in self._proposals.values()):
                 raise ReadError("unresolved_write_requires_inspection_no_new_write")
             facts = prepare(self, kind, deepcopy(parameters))
             return deepcopy(self._new_proposal(facts, parameters))
 
     def _new_proposal(self, facts, parameters):
-        if any(p["state"] in {"attempted", "unknown"} and p["facts"]["order_id"] == facts["order_id"] for p in self._proposals.values()):
+        if any(p["state"] in {"attempted", "pending", "unknown"} and p["facts"]["order_id"] == facts["order_id"] for p in self._proposals.values()):
             raise ReadError("unresolved_write_requires_inspection_no_new_write")
         for previous in self._proposals.values():
             if (previous["state"] == "prepared" and previous["parameters"] == parameters
@@ -238,7 +238,7 @@ class ChangeTools(CustomerTools):
                 raise ReadError("human_requested_business_writes_paused")
             if proposal["facts"]["kind"] != kind:
                 raise ReadError("wrong_execution_kind")
-            if proposal["state"] in {"attempted", "completed", "accepted", "failed", "unknown"}:
+            if proposal["state"] in {"attempted", "pending", "completed", "accepted", "failed", "unknown"}:
                 return deepcopy(proposal.get("outcome", {"state": proposal["state"]}))
             if proposal["state"] != "prepared":
                 raise ReadError("proposal_not_prepared")
@@ -251,21 +251,26 @@ class ChangeTools(CustomerTools):
             # has no dialogue channel and cannot prove either meaning.
             proposal["state"] = "attempted"
             outcome = write_once(self.client_api, proposal["facts"])
-            outcome["customer_facts"] = customer_facts(proposal["facts"], outcome)
-            proposal["outcome"] = {"proposal_id": proposal_id, **outcome}
-            proposal["state"] = outcome["state"]
-            if outcome["state"] in {"completed", "accepted"}:
-                receipt = outcome["receipt"]
-                if kind == "default_address" and self._observed_profile:
-                    self._observed_profile["default_shipping_address"] = deepcopy(receipt["default_shipping_address"])
-                elif proposal["facts"]["order_id"] in self._observed_orders:
-                    observed = self._observed_orders[proposal["facts"]["order_id"]]
-                    observed.update({key: deepcopy(value) for key, value in receipt.items() if key != "order_id"})
-            if "plan_id" in proposal:
-                step = self._plans[proposal["plan_id"]]["steps"][proposal["step_index"]]
-                step["state"] = outcome["state"]
-                step["outcome"] = deepcopy(proposal["outcome"])
+            self._save_outcome(proposal, outcome)
             return deepcopy(proposal["outcome"])
+
+    def _save_outcome(self, proposal, outcome):
+        outcome = deepcopy(outcome)
+        facts = proposal["facts"]
+        outcome["customer_facts"] = customer_facts(facts, outcome)
+        proposal["outcome"] = {"proposal_id": proposal["proposal_id"], **outcome}
+        proposal["state"] = outcome["state"]
+        if outcome["state"] in {"completed", "accepted"}:
+            receipt = outcome["receipt"]
+            if facts["kind"] == "default_address" and self._observed_profile:
+                self._observed_profile["default_shipping_address"] = deepcopy(receipt["default_shipping_address"])
+            elif facts["order_id"] in self._observed_orders:
+                observed = self._observed_orders[facts["order_id"]]
+                observed.update({key: deepcopy(value) for key, value in receipt.items() if key != "order_id"})
+        if "plan_id" in proposal:
+            step = self._plans[proposal["plan_id"]]["steps"][proposal["step_index"]]
+            step["state"] = outcome["state"]
+            step["outcome"] = deepcopy(proposal["outcome"])
 
     @is_tool(ToolType.WRITE)
     def execute_default_address(self, proposal_id: str) -> dict:
@@ -411,22 +416,40 @@ class ChangeTools(CustomerTools):
 
     @is_tool(ToolType.READ)
     def inspect_change_result(self, proposal_id: str) -> dict:
-        """Inspect with existing customer/order reads, without repeating the write.
+        """Resolve a pending workflow or inspect an uncertain write, using reads.
 
-        Preserves the original write outcome. Seeing a record is evidence, never
-        proof of request identity or permission to retry an unknown write. No new
-        status API, compensation, slicing or write is performed.
+        Follow only the status Location actually returned by the write service,
+        honoring Retry-After. A final receipt is checked against the original
+        approved items, amounts and destination. No new approval is required to
+        inspect an already submitted request. Never submit it a second time.
+        Without a usable workflow receipt, read the owned record and check for
+        the exact requested business state. A matching observation confirms that
+        current record, not the identity of its writer. An unchanged/stale record
+        never proves a write failed and never authorizes replay.
         """
         with self._lock:
             proposal = self._proposal(proposal_id)
             count = self._inspections.get(proposal_id, 0)
             self._inspections[proposal_id] = count + 1
             facts = proposal["facts"]
-            observed = self.get_owned_order(facts["order_id"]) if facts["order_id"] else self._profile()
+            original = deepcopy(proposal.get("outcome"))
+            observed = None
+            if proposal["state"] in {"pending", "unknown"}:
+                proposal.setdefault("initial_outcome", original)
+                if original and "workflow" in original and original.get("workflow_status") != "succeeded":
+                    self._save_outcome(proposal, resume_workflow(self.client_api, facts, original["workflow"]))
+                if proposal["state"] == "unknown":
+                    observed = self.get_owned_order(facts["order_id"]) if facts["order_id"] else self._profile()
+                    checked = observed_receipt(facts, observed)
+                    if checked["state"] in {"accepted", "completed"}:
+                        self._save_outcome(proposal, checked)
+            else:
+                observed = self.get_owned_order(facts["order_id"]) if facts["order_id"] else self._profile()
             return {"proposal_id": proposal_id, "state": proposal["state"],
                     "write_outcome": deepcopy(proposal.get("outcome")), "observed": observed,
+                    "customer_facts": deepcopy(proposal.get("outcome", {}).get("customer_facts")),
                     "inspection_number": count + 1,
-                    "warning": "Observation does not authorize replay of a write or prove an unknown write outcome."}
+                    "warning": "Status checks and observations never authorize replay of the write."}
 
     @is_tool(ToolType.GENERIC, mutates_state=True)
     def transfer_to_human(self, summary: str, basis: Literal["explicit_request", "unsupported_escalation", "policy_gap"]) -> dict:

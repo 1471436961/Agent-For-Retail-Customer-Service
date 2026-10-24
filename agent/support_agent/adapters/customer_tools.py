@@ -169,6 +169,13 @@ class CustomerTools(ClientAPIToolKitBase):
                     orders.append(order)
                     self._observed_orders[identifier] = deepcopy(order)
                 result["orders"] = orders
+                kinds = set()
+                for order in orders:
+                    if order["status"] == "delivered":
+                        kinds.update(("return", "exchange"))
+                    elif order["status"] == "pending":
+                        kinds.update(("order_address", "cancel", "payment", "modify_items"))
+                result["change_policies"] = {kind: service_policy(kind) for kind in sorted(kinds)}
             return result
 
     @is_tool(ToolType.READ)
@@ -226,12 +233,16 @@ class CustomerTools(ClientAPIToolKitBase):
 
         Public catalog products need not appear in the customer's purchased orders.
         This does not grant permission to buy, modify quantity or access other accounts.
+        variant_count includes out-of-stock variants; available_variant_count
+        counts only actual available=true variants. These are computed locally
+        from the returned records, never guessed or fixed to a benchmark answer.
         """
         with self._lock:
             self._customer_id()
             product = read_product(self.client_api, product_id)
             self._observed_products[product_id] = deepcopy(product)
-            return product
+            return {**product, "variant_count": len(product["items"]),
+                    "available_variant_count": sum(item["available"] for item in product["items"])}
 
     @is_tool(ToolType.READ)
     def get_catalog_item(self, item_id: str) -> dict:

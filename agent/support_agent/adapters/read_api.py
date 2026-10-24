@@ -1,11 +1,15 @@
 """Six explicit read operations through the injected ClientAPI only."""
 
 from urllib.parse import quote
+import time
 
 from pydantic import ValidationError
 from support_agent.adapters.read_models import READ_MODELS
 from support_agent.domain.identity import ReadError, resource_id
 from support_agent.adapters.response_values import normalize_response, ResponseValueError, validation_issues, response_shape
+from support_agent.adapters.workflow_api import retry_delay
+
+READ_RETRY_WAIT_SECONDS = 20
 
 _ERROR_CODES = {
     "invalid_body", "resource_not_found", "resource_conflict", "business_rule_violation",
@@ -14,13 +18,28 @@ _ERROR_CODES = {
 
 
 def _read(client_api, operation, method, path, *, body=None):
-    try:
-        if body is None:
-            response = client_api.request(method, path)
-        else:
-            response = client_api.request(method, path, body=body)
-    except Exception:
-        raise ReadError("read_transport_failure", operation=operation) from None
+    waited = 0
+    while True:
+        try:
+            if body is None:
+                response = client_api.request(method, path)
+            else:
+                response = client_api.request(method, path, body=body)
+        except Exception:
+            raise ReadError("read_transport_failure", operation=operation) from None
+        # All six operations in this adapter are contractually read-only,
+        # including POST searchCustomers. Honor only explicit rate-limit timing;
+        # do not retry auth/server/transport failures or any business write.
+        if response.status_code != 429:
+            break
+        try:
+            delay = retry_delay(response)
+        except (ValueError, TypeError, OverflowError):
+            break
+        if waited + delay > READ_RETRY_WAIT_SECONDS:
+            break
+        time.sleep(delay)
+        waited += delay
     status = response.status_code
     if status != 200:
         error = response.body.get("error") if isinstance(response.body, dict) else None

@@ -1,7 +1,7 @@
 """Host-executed tools with one bounded correction of an invalid model reply."""
 
 from support_agent.gateway import GatewayAdapter
-from support_agent.prompts import IDENTITY_PROMPT, SYSTEM_PROMPT
+from support_agent.prompts import IDENTITY_PROMPT, SYSTEM_PROMPT, SERVICE_GOALS
 from support_agent.state import (
     ProtocolError, SessionState, initial_state, receive, record_reply, restore_history, receipt_text, store, normalize_call_ids, bind_submission_reference,
 )
@@ -44,7 +44,7 @@ class RetailAgent:
         if current.model_calls >= self.gateway.limits.max_model_calls:
             return self._stop(current, "model_call_limit")
         try:
-            prompt = SYSTEM_PROMPT if current.verified_customer_id else IDENTITY_PROMPT
+            prompt = SERVICE_GOALS + (SYSTEM_PROMPT if current.verified_customer_id else IDENTITY_PROMPT)
             if current.proposals:
                 progress = [{"proposal_id": identifier, "kind": p["facts"]["kind"],
                              "order_id": p["facts"]["order_id"], "state": p["state"],

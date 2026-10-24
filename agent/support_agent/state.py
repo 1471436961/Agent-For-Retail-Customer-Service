@@ -214,6 +214,25 @@ def receive(state, message):
                         state.reviewed.pop(proposal_id, None)
                 if state.review_to_display and state.review_to_display["facts"]["order_id"] == state.submissions[identifier]["order_id"]:
                     state.review_to_display = None
+            elif call["name"] == "inspect_change_result":
+                identifier = call["arguments"].get("proposal_id")
+                outcome = body.get("write_outcome")
+                if isinstance(outcome, dict) and body.get("proposal_id") == identifier:
+                    previous = state.proposals.get(identifier, {}).get("state")
+                    if identifier in state.proposals:
+                        state.proposals[identifier]["state"] = body.get("state", "unknown")
+                    for submission in state.submissions.values():
+                        if submission.get("proposal_id") == identifier:
+                            previous = submission["state"]
+                            submission["state"] = body.get("state", "unknown")
+                    if (previous in {"pending", "unknown"} and
+                            isinstance(body.get("customer_facts"), dict)):
+                        # Replace an earlier pending/uncertain facts block with
+                        # the actual inspection outcome before replying.
+                        facts = body["customer_facts"]
+                        state.receipt_facts_to_display = [row for row in state.receipt_facts_to_display
+                            if (row.get("kind"), row.get("order_id")) != (facts.get("kind"), facts.get("order_id"))]
+                        state.receipt_facts_to_display.append(facts)
             elif call["name"] in {"abandon_plan", "transfer_to_human"}:
                 if call["name"] == "abandon_plan":
                     ids = {step.get("proposal_id") for step in body.get("steps", []) if step.get("state") == "paused"}
@@ -271,7 +290,7 @@ def record_reply(state, reply, actions, *, live=False):
             raise ProtocolError("A submitted change needs an actual earlier assistant recap and later customer input")
         if call.name == DIRECT_ACTION:
             previous = state.submissions.get(call.arguments.get("request_id"), {})
-            if previous.get("state") in {"accepted", "completed", "attempted", "unknown"}:
+            if previous.get("state") in {"accepted", "completed", "attempted", "pending", "unknown"}:
                 raise ProtocolError("This operation already has an actual write outcome for this customer turn. Report its receipt; do not submit it again through another tool")
         if call.name in EXECUTE_ACTIONS:
             identifier = call.arguments.get("proposal_id")

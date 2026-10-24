@@ -201,7 +201,10 @@ class ReadScopeTests(unittest.TestCase):
         actual = self.kit.list_products()
         self.assertEqual(actual, {"products": [{"product_id": p["product_id"], "name": p["name"]}
                                                for p in self.backend.records["products"]]})
-        self.assertEqual(self.kit.get_product_variants("p0_shirt"), self.backend.records["products"][0])
+        product = self.kit.get_product_variants("p0_shirt")
+        raw = self.backend.records["products"][0]
+        self.assertEqual(product, {**raw, "variant_count": len(raw["items"]),
+                                  "available_variant_count": sum(item["available"] for item in raw["items"])})
         item = self.kit.get_catalog_item("p0_shirt_s_blue")
         self.assertNotIn("product_id", item)
         self.assertIsInstance(item["available"], bool)

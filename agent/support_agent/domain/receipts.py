@@ -3,9 +3,14 @@
 
 def customer_facts(facts, outcome):
     summary = {"kind": facts["kind"], "state": outcome["state"], "order_id": facts["order_id"]}
+    if outcome["state"] == "pending":
+        summary["notice"] = "The service accepted an asynchronous job; the business change is not yet confirmed. Continue with inspect_change_result, not another write."
+        return summary
     if outcome["state"] not in {"completed", "accepted"}:
         summary["notice"] = "No successful change is confirmed. Do not retry an unknown write."
         return summary
+    if outcome.get("verification") == "observed_matching_business_record":
+        summary["verification"] = "The current owned record matches the requested change; this observation does not identify its writer."
     kind = facts["kind"]
     methods = {m["id"]: m for m in facts["snapshot"]["profile"]["payment_methods"]}
     if kind in {"cancel", "payment"}:

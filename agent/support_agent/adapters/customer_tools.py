@@ -156,7 +156,7 @@ class CustomerTools(ClientAPIToolKitBase):
             return result
 
     @is_tool(ToolType.READ)
-    def get_owned_order(self, order_id: str) -> dict:
+    def get_owned_order(self, order_id: str, include_product_variants: bool = False) -> dict:
         """Read one of the verified customer's orders, preserving all occurrences.
 
         Checks the current own-order list before requesting the order, then checks
@@ -165,6 +165,12 @@ class CustomerTools(ClientAPIToolKitBase):
         Copy the complete order ID exactly, including a leading #; the tool
         encodes it for the URL. A response schema/type failure is not an ID error.
         Never strip punctuation or try a fabricated alternative identifier.
+        For item changes or exchanges set include_product_variants=true. This
+        reads the actual variant catalogs of this order's distinct products in
+        the same read-only action, under product_variants. Choose replacements
+        from those results rather than fetching each catalog in extra turns.
+        It makes only the existing owned-order and catalog GET requests, never
+        a write, and preserves the original order fields and duplicate items.
         """
         order_id = resource_id(order_id)
         with self._lock:
@@ -175,6 +181,13 @@ class CustomerTools(ClientAPIToolKitBase):
             if order["customer_id"] != self._customer_id():
                 raise ReadError("order_access_denied")
             self._observed_orders[order_id] = deepcopy(order)
+            if include_product_variants:
+                products = {}
+                for item in order["items"]:
+                    identifier = item["product_id"]
+                    if identifier not in products:
+                        products[identifier] = self.get_product_variants(identifier)
+                return {**order, "product_variants": list(products.values())}
             return order
 
     @is_tool(ToolType.READ)

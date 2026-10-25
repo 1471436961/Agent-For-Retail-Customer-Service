@@ -58,7 +58,7 @@ class GatewayWireTests(unittest.TestCase):
         reply, state = self.agent.generate_next_message(self.user, self.agent.get_init_state())
         first = self.provider.call_args.kwargs
         names = {t["function"]["name"] for t in first["tools"]}
-        self.assertEqual(names, {"verify_customer", "transfer_to_human"})
+        self.assertEqual(names, {"verify_customer", "load_skills", "transfer_to_human"})
         self.assertIsNone(state["verified_customer_id"])
         # Includes optional owned-order/catalog reads after verification, but
         # still excludes the full business action schema set. This is a test
@@ -84,7 +84,7 @@ class GatewayWireTests(unittest.TestCase):
             ToolMessage(role="tool", id=call.id, content='{"customer_id":"untrusted"}', error=True)]), state)
         self.assertIsNone(state["verified_customer_id"])
         self.assertEqual({t["function"]["name"] for t in self.provider.call_args.kwargs["tools"]},
-                         {"verify_customer", "transfer_to_human"})
+                         {"verify_customer", "load_skills", "transfer_to_human"})
 
     def test_reused_provider_id_has_matching_results_in_both_wire_rounds(self):
         customer = self.backend.records["customers"][0]
@@ -193,11 +193,11 @@ class GatewayWireTests(unittest.TestCase):
         self.assertIsNone(state["halt_reason"])
         self.assertIn(output["email"], reply.content)
         wire = self.provider.call_args.kwargs["messages"]
-        self.assertEqual([row["role"] for row in wire], ["system", "user", "assistant", "tool", "system"])
-        self.assertEqual(wire[-3]["content"], assistant.content)
-        self.assertEqual(wire[-3]["tool_calls"][0]["id"], call.id)
-        self.assertEqual(wire[-2]["tool_call_id"], call.id)
-        self.assertTrue(json.loads(wire[-2]["content"])["ok"])
+        self.assertEqual([row["role"] for row in wire], ["system", "user", "assistant", "tool"])
+        self.assertEqual(wire[-2]["content"], assistant.content)
+        self.assertEqual(wire[-2]["tool_calls"][0]["id"], call.id)
+        self.assertEqual(wire[-1]["tool_call_id"], call.id)
+        self.assertTrue(json.loads(wire[-1]["content"])["ok"])
         self.assertEqual(original, json.dumps(serialized))
         self.assertEqual([row["path"] for row in self.backend.calls],
                          ["/v1/customers/search", "/v1/customers/p0_customer_a"])

@@ -14,7 +14,8 @@ from support_agent.adapters.change_tools import ACTION_NAMES, EXECUTE_ACTIONS, D
 from support_agent.config import PREFERRED_MODEL
 from support_agent.domain.money import ArithmeticOperation
 from support_agent.domain.presentation import proposal_view
-from support_agent.adapters.change_parameters import ChangeParameters, PlanRequest, SubmissionRequest
+from support_agent.adapters.change_parameters import ChangeParameters, PlanRequest, SubmissionRequest, PARAMETERS_BY_KIND
+from support_agent.skills import active_skill_names, operations_for, policy_reference
 
 
 @dataclass(frozen=True)
@@ -70,19 +71,40 @@ class GatewayAdapter:
         self.compatibility_actions = self.live_actions
         live_names = {"verify_customer", "get_customer_summary", "list_customer_orders",
                       "get_owned_order", "list_products", "read_products", "read_context",
-                      "get_catalog_summary", "query_product_variants", "calculate", "prepare_change", "prepare_changes",
+                      "get_catalog_summary", "query_product_variants", "calculate", "prepare_change", "prepare_changes", "load_skills",
                       "submit_changes", "invalidate_change", "inspect_change_result",
                       "get_service_status", "transfer_to_human", *DIRECT_WRITE_KINDS}
         self.live_actions = tuple(action for action in self.live_actions if action.name in live_names)
         descriptions = {
-            "verify_customer": "Independently verify by email OR full first/last name and postal code; match a supplied customer ID before details. Include an already-named order_id. For unknown orders select include_order_details=true. Avoid preloading all catalogs before criteria are known; query_product_variants batches selected filtering/ranking afterward. product_names can combine requested counts/browsing with verification. All optional reads happen AFTER verification; reuse actual requested_order/requested_context records. Use null claimed_customer_id only when absent. Profile failure preserves verification; recover via get_customer_summary.",
-            "get_owned_order": "Read one exact owned order ID, checking membership and owner. Preserve #. Returns items, status and payments. For item-change/exchange requests, include_product_variants=true batches this order's related catalogs. Otherwise select relevant product IDs for read_products/read_context. Reuse actual records already returned.",
-            "prepare_change": "READ ONLY: optional grounded quote when calculations or facts are missing. If the exact replacement IDs are already known from actual orders/catalogs, this quote can load missing catalogs and check availability itself; no prior duplicate query/read is required. No permission to prepare is needed. parameters MUST match kind: address operations need address, not replacements/payment. Use supersedes to replace old unsubmitted drafts on this target in the SAME call; no prior invalidation needed. Reuse known component calculations when reducing a quoted list; a single recorded return price needs no quote. After recap and approval use the operation-specific write tool, not another quote. Select exact observed IDs.",
-            "submit_change": "WRITE: submit the exact complete change already explained and clearly approved in a later customer reply. This performs one real business API write after fresh checks. Use it immediately on approval; prepare_change would only quote again. No proposal ID or extra confirmation is required. parameters use the actual observed IDs, saved settlement method and ordered item occurrences. A question alone or unmet condition is not consent. Never retry an uncertain write. request_id is filled by the Agent.",
+            "verify_customer": "Verify email OR full name+postal_code; match claimed_customer_id (null only if absent). Include named order_id; include_order_details discovers owned orders. skill_names loads relevant procedures in this call. Optional reads follow verification. Recover profile failure via get_customer_summary.",
+            "get_customer_summary": "Read the verified profile, saved methods and owned order IDs.",
+            "list_customer_orders": "Read owned order IDs; include_details reads each owned order. No inferred recency.",
+            "get_owned_order": "Read exact owned order_id, preserving #. Optional include_product_variants reads related catalogs.",
+            "list_products": "Read the actual public product index after verification.",
+            "read_products": "Read selected product catalogs with variants, prices and availability in one batch.",
+            "read_context": "Batch explicit owned orders and selected products. include_order_details discovers all owned orders. No writes.",
+            "get_catalog_summary": "Count product types or variants; exact product_name selects a catalog. Available and total counts differ.",
+            "query_product_variants": "Batch exact filters, explicit numeric comparisons and sorting of available variants. No limit for all matches. Invalid criteria are not a stock finding.",
+            "calculate": "General add/subtract/multiply/divide/round. Model selects operands; optional final decimal_places. Returns input trace.",
+            "load_skills": "Load named business skills with dependencies, REPLACING active skills. Public read only; no customer API or approval. Retain multiple skills for mixed goals.",
+            "prepare_change": "Optional read-only quote for missing facts/calculations. parameters must match kind. supersedes replaces drafts; after recap+approval use the write tool.",
+            "prepare_changes": "Batch optional read-only quotes for explicit changes; no submission or cross-operation atomicity.",
+            "submit_changes": "WRITE approved explicit changes sequentially, each with fresh checks. Separate actual outcomes; stops on failure/uncertainty. Agent binds request_id.",
+            "invalidate_change": "Withdraw an unsubmitted draft without replacement; not cancellation of a registered request.",
+            "inspect_change_result": "Inspect a pending/unknown write through its real status resource; never repost it.",
+            "get_service_status": "Read current local draft/submission outcomes; no new business write.",
+            "transfer_to_human": "Transfer on explicit human request, requested unsupported-limit escalation, or a true policy gap. Minimal factual summary; accepted outcome ends automation.",
+            "update_default_address": "WRITE the approved verified profile default address only.",
+            "update_order_address": "WRITE the approved complete address of this pending owned order only.",
+            "cancel_order": "WRITE the approved whole pending order cancellation with its supported reason.",
+            "change_order_payment": "WRITE the approved whole pending order payment replacement to one saved method.",
+            "modify_order_items": "WRITE the complete approved pending replacement list once; preserve occurrences and per-row unchanged options.",
+            "request_return": "WRITE the complete approved delivered return list once with the eligible refund destination.",
+            "request_exchange": "WRITE the complete approved delivered replacement list once with the chosen saved settlement method.",
         }
         self.live_actions = tuple(action.model_copy(update={
             "params": create_model("Focused" + action.name,
-                __base__=PlanRequest if action.name in {"prepare_change", DIRECT_ACTION} else None, **{
+                __base__=PlanRequest if action.name in {"prepare_change", DIRECT_ACTION} else action.params, **{
                 key: (field.annotation, deepcopy(PlanRequest.model_fields["parameters"] if key == "parameters" else field))
                 for key, field in action.params.model_fields.items()
             }),
@@ -122,7 +144,7 @@ class GatewayAdapter:
         if state.verified_customer_id:
             if not state.customer_profile_loaded:
                 return tuple(action for action in self.live_actions if action.name in {
-                    "get_customer_summary", "transfer_to_human",
+                    "get_customer_summary", "transfer_to_human", "load_skills",
                 })
             # Advertise executors after a genuine customer-facing quote
             # response and later customer input. Chronology is not proof of
@@ -136,34 +158,42 @@ class GatewayAdapter:
                          if action.name != "verify_customer"
                          if (action.name not in EXECUTE_ACTIONS or EXECUTE_ACTIONS[action.name] in ready_kinds)
                          and (action.name not in {DIRECT_ACTION, BATCH_DIRECT_ACTION, *DIRECT_WRITE_KINDS} or has_prior_assistant_turn(state)))
-            key = (tuple(action.name for action in actions), tuple(state.owned_order_ids or []))
+            selected = active_skill_names(state.history)
+            kinds = operations_for(selected) if selected else None
+            if selected:
+                actions = tuple(action for action in actions
+                    if action.name not in DIRECT_WRITE_KINDS or DIRECT_WRITE_KINDS[action.name] in kinds
+                    if kinds or action.name not in {"prepare_change", "prepare_changes", BATCH_DIRECT_ACTION}
+                    if "catalog-selection" in selected or action.name not in {
+                        "list_products", "read_products", "get_catalog_summary", "query_product_variants"})
+            key = (tuple(action.name for action in actions), tuple(state.owned_order_ids or []), kinds)
             if key not in self._grounded_cache:
-                self._grounded_cache[key] = self._ground_order_ids(actions, state.owned_order_ids)
+                self._grounded_cache[key] = self._ground_order_ids(actions, state.owned_order_ids, kinds)
             return self._grounded_cache[key]
         return tuple(action for action in self.live_actions if action.name in {
-            "verify_customer", "transfer_to_human",
+            "verify_customer", "transfer_to_human", "load_skills",
         })
 
     @staticmethod
-    def _ground_order_ids(actions, identifiers):
+    def _ground_order_ids(actions, identifiers, kinds=None):
         """Constrain selection to observed IDs, without normalizing or choosing one.
 
         The toolkit independently checks current ownership at execution. This
         schema catches a model's misspelled parameter before a host tool round.
         """
-        if not identifiers:
-            return actions
-        order_id = Literal[tuple(dict.fromkeys(identifiers))]
+        order_id = Literal[tuple(dict.fromkeys(identifiers))] if identifiers else str
+        models = tuple(dict.fromkeys(PARAMETERS_BY_KIND[kind] for kind in kinds)) if kinds else get_args(ChangeParameters)
         variants = tuple(create_model("Owned" + model.__name__, __base__=model,
             order_id=(order_id, Field(..., description="Exact ID from the verified customer's own order_ids; keep every character.")))
-            if "order_id" in model.model_fields else model for model in get_args(ChangeParameters))
+            if identifiers and "order_id" in model.model_fields else model for model in models)
         changes = variants[0]
         for variant in variants[1:]:
             changes = changes | variant
+        kind_field = {"kind": (Literal[kinds], Field(...))} if kinds else {}
         quote_request = create_model("OwnedPlanRequest", __base__=PlanRequest,
-                                     parameters=(changes, deepcopy(PlanRequest.model_fields["parameters"])))
+                                     parameters=(changes, Field(...)), **kind_field)
         submission_request = create_model("OwnedSubmissionRequest", __base__=SubmissionRequest,
-                                          parameters=(changes, deepcopy(SubmissionRequest.model_fields["parameters"])))
+                                          parameters=(changes, Field(...)), **kind_field)
         result = []
         for action in actions:
             fields = {}
@@ -172,7 +202,8 @@ class GatewayAdapter:
             elif action.name == "read_context":
                 fields["order_ids"] = (list[order_id] | None, Field(default=None))
             elif action.name in {"prepare_change", "submit_change"}:
-                fields["parameters"] = (changes, deepcopy(PlanRequest.model_fields["parameters"]))
+                fields["parameters"] = (changes, Field(...))
+                fields.update(kind_field)
             elif action.name == "prepare_changes":
                 fields["requests"] = (list[quote_request], Field(...))
             elif action.name == BATCH_DIRECT_ACTION:
@@ -225,6 +256,7 @@ class GatewayAdapter:
                             actual = {**actual, "review": compact(actual["review"])}
                         elif isinstance(actual.get("changes"), list):
                             actual = {**actual, "changes": [compact(p) for p in actual["changes"]]}
+                    actual = GatewayAdapter._policy_references(actual)
                     body = {"ok": True, "evidence_call_id": result.id,
                             "result": actual}
                 except (ValueError, TypeError):
@@ -243,3 +275,26 @@ class GatewayAdapter:
                 message = project_result(message)
             messages.append(message)
         return messages
+
+    @staticmethod
+    def _policy_references(value):
+        """Project repeated policy text to references; retain raw state evidence.
+
+        Active instructions come once from trusted packaged assets, not from a
+        customer record or the tool result's instruction text.
+        """
+        if isinstance(value, list):
+            return [GatewayAdapter._policy_references(row) for row in value]
+        if not isinstance(value, dict):
+            return value
+        result = {}
+        for key, row in value.items():
+            if key == "business_skills" and isinstance(row, dict) and "names" in row:
+                result[key] = {"names": row["names"], "versions": row["versions"]}
+            elif key == "policy" and isinstance(row, dict) and row.get("operation") in PARAMETERS_BY_KIND:
+                result[key] = policy_reference(row["operation"])
+            elif key == "change_policies" and isinstance(row, dict):
+                result[key] = {kind: policy_reference(kind) for kind in row if kind in PARAMETERS_BY_KIND}
+            else:
+                result[key] = GatewayAdapter._policy_references(row)
+        return result

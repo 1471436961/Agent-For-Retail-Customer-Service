@@ -1,18 +1,16 @@
 """Host-executed tools with one bounded correction of an invalid model reply."""
 
 from support_agent.gateway import GatewayAdapter
-from support_agent.prompts import IDENTITY_PROMPT, SYSTEM_PROMPT, SERVICE_GOALS, NEXT_DECISION
+from support_agent.prompts import BASE_PROMPT
 from support_agent.state import (
     ProtocolError, SessionState, initial_state, receive, record_reply, restore_history, receipt_text, store, normalize_call_ids, bind_submission_reference,
 )
 from tau2.data_model.message import AssistantMessage, SystemMessage
 from support_agent.adapters.conversation_api import TRANSFER_NOTICE
 from support_agent.domain.gateway_failure import diagnose_gateway_failure
-from support_agent.domain.reply import (
-    REPLY_INSTRUCTIONS, response_content, output_was_truncated,
-)
+from support_agent.domain.reply import response_content, output_was_truncated
 from support_agent.progress import evidence_view, unresolved_operations
-from support_agent.domain.policy import business_rules
+from support_agent.skills import active_skill_names, skill_index, instructions_for
 import json
 from pydantic import ValidationError
 
@@ -67,9 +65,10 @@ class RetailAgent:
             return self._stop(current, "model_call_limit")
         try:
             current.runtime_phase = "prepare_model_context"
-            prompt = SERVICE_GOALS + (SYSTEM_PROMPT if current.verified_customer_id else IDENTITY_PROMPT)
-            if current.verified_customer_id:
-                prompt += "\nApplicable business rules from the supplied materials: " + json.dumps(business_rules(), ensure_ascii=False)
+            selected_skills = active_skill_names(current.history)
+            prompt = BASE_PROMPT + skill_index()
+            if selected_skills:
+                prompt += "\n\nActive business skills:\n" + instructions_for(selected_skills)
             if current.verified_customer_id:
                 prompt += "\nRecorded evidence and outcomes: " + json.dumps(evidence_view(current))
             if current.protocol_diagnostic:
@@ -78,10 +77,8 @@ class RetailAgent:
                            "Do not request identity or confirmation again merely because your draft was malformed. "
                            "Use the operation-specific write tool with its displayed fields; keep text concise.")
             actions = self.gateway.actions_for(current)
-            messages = [SystemMessage(role="system", content=prompt + REPLY_INSTRUCTIONS, timestamp=None),
+            messages = [SystemMessage(role="system", content=prompt, timestamp=None),
                         *self.gateway.project_history(current.history)]
-            if current.verified_customer_id:
-                messages.append(SystemMessage(role="system", content=NEXT_DECISION, timestamp=None))
         except Exception as error:
             current.gateway_diagnostic = diagnose_gateway_failure(error, stage="history_projection")
             return self._stop(current, "gateway_failure")

@@ -111,13 +111,11 @@ class ChangeTools(CustomerTools):
 
     @is_tool(ToolType.READ)
     def get_service_policy(self, operation: Literal["default_address", "order_address", "cancel", "payment", "modify_items", "return", "exchange"]) -> dict:
-        """Read the applicable supplied policy for an operation, including processing questions.
+        """Compatibility reference to this operation's packaged business skills.
 
-        These are sourced course policy facts, not live backend/fulfillment facts.
-        Prepared proposals already include this policy, so do not fetch it again
-        unnecessarily. Use it for policy questions before preparation or when the
-        customer changes operation. No account data, inferred user consent or
-        writes. Cancellation refund timing does not govern returns/exchanges.
+        New decisions use load_skills for procedures and processing questions.
+        Quotes carry references, not another copy of all policy prose. No write,
+        inferred consent or live fulfillment facts are established by this read.
         """
         with self._lock:
             self._customer_id()

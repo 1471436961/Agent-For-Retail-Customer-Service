@@ -139,7 +139,7 @@ class ProtocolTests(unittest.TestCase):
         kwargs = gateway.call_args.kwargs
         self.assertEqual(kwargs["model"], "offline_model")
         self.assertEqual([action.name for action in kwargs["actions"]],
-                         ["verify_customer", "transfer_to_human"])
+                         ["verify_customer", "load_skills", "transfer_to_human"])
         verify = kwargs["actions"][0].params.model_json_schema()
         self.assertIn("claimed_customer_id", verify["required"])
         self.assertNotIn("max_tokens", kwargs)

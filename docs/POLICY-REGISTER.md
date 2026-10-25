@@ -113,3 +113,21 @@
 | 截图或历史案例里的完整地址簿、收据主题、通知、备注 | 不扩展当前 API/字段；历史批准不等于应该写入 |
 
 出处：S01、S03、S09、S13、S15、S17；[reference 解释规则](E:/Agent-For-Retail-Customer-Service-Materials/materials/uploaded_materials/reference_document.md:5)。
+
+## 应用内 skill 归档
+
+规则正文位于 `agent/support_agent/business_skills/`。按能力划分，模型显式选择；不按客户、评测编号或期望结果路由。每份 SKILL.md 保留来源；原材料中的历史案例只作为已批准流程的佐证，不抽取具体测试答案。
+
+| Skill | 规范化要求／出处 |
+|---|---|
+| service-workflow | CONF-01–04、ITEM-02–03、API-02–03；S04、S18、S19 |
+| catalog-selection | FACT-01、ITEM-01–03、MONEY-01–03；S04、S07、S18 |
+| address-changes | ADDR-01–02、STATE-01–04；S02、S04、S05、S08、S10 |
+| order-cancellation | CANCEL-01–03、MONEY-04；S08、S09、S13、S15 |
+| order-payment | PAY-01–03、MONEY-04；S10、S14、S15 |
+| item-updates | ITEM-01–04、STATE-02–03；S04、S08、S11、S18 |
+| delivered-returns | RET-01–03、一次性退换共享边界；S04、S08、S12、S18、S21 |
+| delivered-exchanges | EXCH-01–03、操作专属过程／时点；S04、S08、S12、S18、S22 |
+| human-handoff | HUMAN-01–03、LIMIT-01；S06、S16、S19 |
+
+AUTH-01–06 的短核验入口仍在基本 prompt；身份 selector、已核验绑定和归属为工具硬校验。FACT-02–03 的封闭字段／跨会话边界由适配器与会话状态执行，skill 不授予额外字段或私有账户访问。最新适用裁决优于草案、已替代内容及非 consumer 材料；接口澄清优于历史界面字段。

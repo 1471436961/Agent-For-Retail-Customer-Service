@@ -12,6 +12,7 @@ from support_agent.domain.identity import (
     IdentityState, ReadError, identity_selector, resource_id, verification_failed,
 )
 from support_agent.domain.policy import service_policy
+from support_agent.skills import SkillName, skill_bundle
 from support_agent.domain.money import calculate_values
 from support_agent.domain.catalog import query_variants
 from support_agent.adapters.read_models import VariantQuery
@@ -20,7 +21,7 @@ from pydantic import ValidationError
 READ_ACTION_NAMES = (
     "verify_customer", "lookup_customer", "get_customer_summary", "list_customer_orders",
     "get_owned_order", "list_products", "get_product_variants", "get_catalog_item",
-    "get_catalog_summary", "read_products", "read_context", "query_product_variants",
+    "get_catalog_summary", "read_products", "read_context", "query_product_variants", "load_skills",
 )
 VERIFICATION_ACTION_NAMES = frozenset({"verify_customer", "lookup_customer"})
 
@@ -85,10 +86,20 @@ class CustomerTools(ClientAPIToolKitBase):
         return result
 
     @is_tool(ToolType.READ)
+    def load_skills(self, names: list[SkillName]) -> dict:
+        """Load general business skills and dependencies, replacing the active set.
+
+        Public packaged procedures only; no customer API call or approval needed.
+        Retain skills for mixed goals. Names are allowlisted, not filesystem paths.
+        """
+        return {"business_skills": skill_bundle(names)}
+
+    @is_tool(ToolType.READ)
     def verify_customer(self, email: str = "", first_name: str = "", last_name: str = "",
                         postal_code: str = "", claimed_customer_id: str | None = None,
                         order_id: str = "", include_product_variants: bool = False,
-                        include_order_details: bool = False, product_names: list[str] | None = None) -> dict:
+                        include_order_details: bool = False, product_names: list[str] | None = None,
+                        skill_names: list[SkillName] | None = None) -> dict:
         """Verify the customer's independently supplied identity, then read their profile.
 
         Provide email alone OR all of first_name, last_name and postal_code. An
@@ -114,6 +125,7 @@ class CustomerTools(ClientAPIToolKitBase):
         reads happen ONLY after successful independent verification; actual
         records are returned as requested_context, not guessed from the request.
         """
+        selected_skills = skill_bundle(skill_names) if skill_names is not None else None
         selector = identity_selector(email, first_name, last_name, postal_code)
         if claimed_customer_id is not None and not isinstance(claimed_customer_id, str):
             raise ReadError("invalid_resource_identifier")
@@ -144,6 +156,7 @@ class CustomerTools(ClientAPIToolKitBase):
                 # without claiming profile data was loaded or inventing values.
                 return {"customer_id": found,
                         "verification": {"state": "verified", "profile_state": "unavailable"},
+                        **({"business_skills": selected_skills} if selected_skills is not None else {}),
                         "profile_error": {"code": error.code, "operation": error.operation,
                                           "http_status": error.http_status}}
             if order_id:
@@ -163,6 +176,8 @@ class CustomerTools(ClientAPIToolKitBase):
                 except ReadError as error:
                     profile["requested_context_error"] = {"code": error.code, "operation": error.operation,
                                                           "http_status": error.http_status}
+            if selected_skills is not None:
+                profile["business_skills"] = selected_skills
             return profile
 
     @staticmethod

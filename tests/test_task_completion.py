@@ -183,14 +183,16 @@ class TaskCompletionTests(unittest.TestCase):
         self.build()
         prepared = self.prepare("exchange")
         proposal = json.loads(prepared.content)
-        self.assertIn("No refund-arrival timeframe", proposal["facts"]["policy"]["refund_timing"])
+        self.assertEqual(proposal["facts"]["policy"]["skill"], "delivered-exchanges")
         totals = {row["purpose"]: row["result"] for row in proposal["facts"]["calculations"]
                   if row.get("purpose") in {"original_total", "replacement_total"}}
         self.assertEqual(set(totals), {"original_total", "replacement_total"})
+        from support_agent.skills import library
         policy = self.kit.get_service_policy("exchange")
-        self.assertIn("no separate purchase", policy["process"])
-        self.assertNotIn("3–6", json.dumps(policy, ensure_ascii=False))
-        self.assertIn("3–6", self.kit.get_service_policy("cancel")["refund"])
+        instructions = library()[policy["skill"]]["instructions"]
+        self.assertIn("no separate purchase", instructions)
+        self.assertNotIn("3–6", instructions)
+        self.assertIn("3–6", library()[self.kit.get_service_policy("cancel")["skill"]]["instructions"])
         self.assertEqual(self.writes(), [])
 
     def test_only_displayed_changes_with_a_later_customer_turn_have_executors(self):

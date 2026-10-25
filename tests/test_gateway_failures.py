@@ -104,7 +104,7 @@ class GatewayFailureTests(unittest.TestCase):
                 self.assertEqual(diagnostic["provider_error_code"], code)
                 self.assertEqual(diagnostic["rate_limit_kind"], kind)
                 self.assertEqual(state["gateway_request"]["model"], "openai/contract-test-model")
-                self.assertEqual(state["gateway_request"]["action_count"], 2)
+                self.assertEqual(state["gateway_request"]["action_count"], 3)
                 self.assertEqual(state["gateway_request"]["model_call"], 1)
                 self.assertNotIn("sensitive-", reply.content + json.dumps(state))
 

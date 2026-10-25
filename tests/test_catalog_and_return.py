@@ -64,7 +64,7 @@ class CatalogAndReturnTests(unittest.TestCase):
                 messages = model.call_args.kwargs["messages"]
                 self.assertTrue(any(getattr(row, "content", None) == original_request for row in messages))
                 # Capability information reaches the model both before and after verification.
-                self.assertIn("live catalog variants", messages[0].content)
+                self.assertIn("catalog-selection:", messages[0].content)
                 if name:
                     result = host.get_response(reply.tool_calls[0])
                     self.assertFalse(result.error, result.content)

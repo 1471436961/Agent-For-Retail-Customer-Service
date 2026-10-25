@@ -17,7 +17,9 @@ def audit(directory):
     metadata = None
     for path in files:
         rel = path.relative_to(directory).as_posix()
-        if any(marker in path.name.lower() for marker in ("enterprise-ai", "secret", "token", "credential", ".env")) or path.suffix not in {".py", ".json"}:
+        skill_asset = (path.name == "SKILL.md" and len(Path(rel).parts) == 4 and
+                       Path(rel).parts[:2] == ("support_agent", "business_skills"))
+        if any(marker in path.name.lower() for marker in ("enterprise-ai", "secret", "token", "credential", ".env")) or (path.suffix not in {".py", ".json"} and not skill_asset):
             errors.append(f"unapproved/credential file (not read): {rel}")
             continue
         ancestors = (path, *path.parents)
@@ -29,7 +31,7 @@ def audit(directory):
         data = path.read_bytes()
         total += len(data)
         hashes[rel] = hashlib.sha256(data).hexdigest()
-        if path.suffix not in {".py", ".json"} or any(part.startswith(".") for part in Path(rel).parts):
+        if (path.suffix not in {".py", ".json"} and not skill_asset) or any(part.startswith(".") for part in Path(rel).parts):
             errors.append(f"unapproved package file: {rel}")
         if len(data) > 256 * 1024:
             errors.append(f"file too large: {rel}")

@@ -71,29 +71,27 @@ class CatalogAndReturnTests(unittest.TestCase):
                     return result
                 return reply
 
-            received = decision("verify_customer", {"email": case["email"], "claimed_customer_id": None})
-            received = decision("list_customer_orders", {"include_details": True})
-            listing = json.loads(received.content)
-            self.assertIn("return", listing["change_policies"])
+            received = decision("verify_customer", {"email": case["email"], "claimed_customer_id": None,
+                "skill_names":["delivered-returns"], "include_order_details":True})
+            listing = json.loads(received.content)["requested_context"]
             order = next(row for row in listing["orders"] if row["order_id"] == case["order_id"])
             product_id = order["items"][0]["product_id"]
             received = decision("get_catalog_summary", {"product_id": product_id})
             count = json.loads(received.content)["available_variant_count"]
             params = {"order_id": order["order_id"], "item_ids": [row["item_id"] for row in order["items"]],
                       "refund_payment_method_id": case["payment_method_ids"]["credit_card"]}
-            received = decision("prepare_change", {"kind": "return", "parameters": params})
             self.assertEqual(runtime.environment.get_db_hash(), before)
-            quote = json.loads(received.content)
-            recap = decision(text=f"There are {count} currently available choices. Return the complete listed items for {quote['facts']['calculations'][0]['result']} to the original card. Do you approve submission?")
+            recap = decision(text=f"There are {count} currently available choices. Return the complete listed items for {order['item_price_total']['result']} to the original card. Do you approve submission?")
             self.assertIn(str(count), recap.content)
             received = UserMessage(role="user", content="That is the complete list. Submit this exact return to my original card.")
             received = decision("submit_change", {"kind": "return", "parameters": params})
             self.assertEqual(json.loads(received.content)["state"], "pending")
-            self.assertEqual(state["proposals"][quote["proposal_id"]]["state"], "prepared")  # result not consumed yet
-            received = decision("inspect_change_result", {"proposal_id": quote["proposal_id"]})
+            proposal_id = json.loads(received.content)["proposal_id"]
+            self.assertEqual(state["proposals"], {})  # result not consumed yet
+            received = decision("inspect_change_result", {"proposal_id": proposal_id})
             self.assertEqual(json.loads(received.content)["state"], "accepted")
             final = decision(text=f"There are {count} available choices. Your return application is registered; a refund arrival is not confirmed.")
-            self.assertEqual(state["proposals"][quote["proposal_id"]]["state"], "accepted")
+            self.assertEqual(kit._proposals[proposal_id]["state"], "accepted")
             self.assertTrue(all(row["state"] == "accepted" for row in state["submissions"].values()))
             self.assertNotIn('"state": "pending"', final.content)
         self.assertNotEqual(runtime.environment.get_db_hash(), before)

@@ -30,6 +30,7 @@
 | S20 | [Agent 契约](../AGENT-CONTRACT.md)、[PROJECT](../PROJECT.md)、[CLASSROOM](../materials/CLASSROOM.md) | 入口、消息、提交包、运行边界；本地上游命令不等于课堂能力 |
 | S21 | [历史地址纠正](E:/Agent-For-Retail-Customer-Service-Materials/materials/uploaded_materials/case_file_46.md:38)、[确认后暂停](E:/Agent-For-Retail-Customer-Service-Materials/materials/uploaded_materials/case_file_38.md:52)、[退货界面](E:/Agent-For-Retail-Customer-Service-Materials/materials/uploaded_materials/screenshot_46.png) | 已批准行为例证，不替代当前 REST |
 | S22 | [换货 gift card 余额](E:/Agent-For-Retail-Customer-Service-Materials/materials/uploaded_materials/case_file_20.md:25)、[换货单一结算方法](E:/Agent-For-Retail-Customer-Service-Materials/materials/uploaded_materials/case_file_40.md:9) | approved 案例明确引用 standing payment condition / standard settlement rule |
+| S23 | [已批准的变体边界](E:/Agent-For-Retail-Customer-Service-Materials/materials/uploaded_materials/case_file_11.md)、[上游零售政策 v1.0.1](https://github.com/sierra-research/tau2-bench/blob/v1.0.1/data/tau2/domains/retail/policy.md) | 原材料明确同产品／变体变化；上游明确 delivered exchange 的不同规格条件。不能由宽松后端推导政策例外；时间等课堂覆写仍以本地材料为准 |
 
 邮件按 quoted-printable 解码解释正文。来源日期只在材料明确时记录；没有日期的行不自行补造发布日期。
 
@@ -64,14 +65,14 @@
 | CANCEL-01 | 取消仅 pending 整单；部分取消不扩大成整单；先有理由再处理 | LLM 明确范围；工具状态/理由校验 | S08、S09 |
 | CANCEL-02 | 理由仅 no longer needed / ordered by mistake；接受明显同义表达，价格投诉不硬映射 | LLM 语义映射/澄清；工具限制规范值 | S09 |
 | CANCEL-03 | 逐笔原 charge/top-up 原金额原方法退款，不能合并净额；取消接口处理资金，不造 refund 接口 | 正式 cancellation；读取流水并解释 | S13 |
-| ITEM-01 | pending 修改和 delivered 换货仅同产品、可用目标变体，保留用户未要求改变的属性 | LLM 偏好；compare/prepare 与归属校验 | S07、S11、S18 |
+| ITEM-01 | pending 修改和 delivered 换货仅同产品、不同规格、可用目标变体，保留用户未要求改变的属性 | LLM 偏好；compare/prepare 与归属校验 | S07、S11、S18、S23 |
 | ITEM-02 | 不改数量；重复 item_id 保留次数与顺序；请求次数不超过订单出现数 | 有序列表/多重计数；不使用 set 去重 | S11、S18 |
 | ITEM-03 | 同 item_id 不同成交价/实例属性无法公开精确定位；不造行 ID 或承诺选中某一条 | 工具报告边界；LLM 解释 | S18 |
 | ITEM-04 | pending 修改完整列表一次提交，一个方法结算差价；gift 覆盖全部正差价；成功锁状态 | 正式 item-modifications；一次性执行状态 | S11 |
 | RET-01 | delivered 退货收齐本单清单，一次申请，不追加既有请求 | LLM 收集；return 工具 | S08、S21 |
 | RET-02 | 退款只到原支付方式或请求打开前已保存 gift card；有多个允许选项让客户决定 | LLM 选择；准备工具校验实际资格 | S12 |
 | RET-03 | 依据原成交记录说明退货金额；申请成功不宣称款已到账 | calculator；正式回执；LLM 结果说明 | S18、S21 |
-| EXCH-01 | delivered 换货同产品可用目标，完整 replacements 一次申请，不能提交后追加 | 复用候选/数量检查；exchange 工具 | S04、S08、S12 |
+| EXCH-01 | delivered 换货同产品且规格不同的可用目标，完整 replacements 一次申请，不能提交后追加；后端接受同 ID 不构成政策许可 | 复用候选/数量检查；exchange 工具 | S04、S08、S12、S23 |
 | EXCH-02 | 价差一个已有方法；退款可到非原支付的 saved 方法；提交后不可改去向 | LLM 选择；exchange proposal 与支付资格检查 | S12 |
 | EXCH-03 | 正差额 gift card 覆盖全部补差；不拆成多个方法结算 | calculator 与余额检查 | S22 |
 | MONEY-01 | 非平凡推导使用 calculator，金额小也不心算；复述 API 数值不属推导 | calculate/prepare；保留输入和运算依据 | S04 |

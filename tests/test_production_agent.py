@@ -27,7 +27,7 @@ class ProductionAgentTests(unittest.TestCase):
         self.build("return", compatibility=False)
         self.model.return_value = AssistantMessage(role="assistant", tool_calls=[ToolCall(
             id="metadata-boundary", name="verify_customer", arguments={"email":self.case["email"],
-            "claimed_customer_id":None})], usage={"prompt_tokens":18,"completion_tokens":9}, cost=0.01,
+            "claimed_customer_id":None,"skill_names":["delivered-returns"]})], usage={"prompt_tokens":18,"completion_tokens":9}, cost=0.01,
             raw_data={"debug_object":object(),"repeated_provider_dump":"x"*100000})
         call,self.state = self.agent.generate_next_message(UserMessage(role="user",content="Help with a return."),self.state)
         self.assertIsNone(self.state["halt_reason"])
@@ -94,11 +94,15 @@ class ProductionAgentTests(unittest.TestCase):
             with self.subTest(kind=kind):
                 incoming=self.read_request(kind)
                 before=len(self.requests)
-                quote=self.result(self.decision(incoming,"prepare_change",{"kind":kind,"parameters":self.params}))
+                if kind in {"modify_items", "exchange"}:
+                    incoming=self.result(self.decision(incoming,"prepare_change",{"kind":kind,"parameters":self.params}))
+                    p=json.loads(incoming.content)
+                    details={"change":p["facts"]["body"],"calculations":p["facts"]["calculations"]}
+                else:
+                    details={"change":self.params,"actual_records":json.loads(incoming.content)}
                 self.assertEqual(len(self.requests),before)  # Reuse genuine already-read facts.
-                p=json.loads(quote.content)
-                text="The complete requested change is "+json.dumps(p["facts"]["body"])+"; calculations "+json.dumps(p["facts"]["calculations"])+". Do you approve this complete submission?"
-                recap=self.decision(quote,text=text)
+                text="The complete requested change is "+json.dumps(details)+". Is this the complete list and do you approve this submission?"
+                recap=self.decision(incoming,text=text)
                 self.assertFalse(self.agent.is_stop(recap))
                 self.assertEqual(self.writes(),[])
                 actions={a.name for a in self.agent.gateway.live_actions}
@@ -156,7 +160,7 @@ class ProductionAgentTests(unittest.TestCase):
     def test_complete_validated_call_is_not_discarded_only_for_length_metadata(self):
         self.build(compatibility=False)
         complete=AssistantMessage(role="assistant",tool_calls=[ToolCall(id="complete-at-boundary",name="verify_customer",
-            arguments={"email":self.case["email"],"claimed_customer_id":None})],
+            arguments={"email":self.case["email"],"claimed_customer_id":None,"skill_names":["service-workflow"]})],
             raw_data={"choices":[{"finish_reason":"length"}]})
         self.model.side_effect=[complete]
         reply,self.state=self.agent.generate_next_message(UserMessage(role="user",content="My email is "+self.case["email"]),self.state)
@@ -236,9 +240,8 @@ class ProductionAgentTests(unittest.TestCase):
                 self.decision(calculated,text=f"The selected items have recorded value {amount:.2f}. Partial cancellation is unavailable for this pending order; that value is not an approved partial refund. Would you like to keep the order?")
                 self.assertEqual(self.writes(),[])
                 address={"address":observed["shipping_address"]}
-                quote=self.result(self.decision(UserMessage(role="user",content="Keep the order. Change only my profile default to the address on this order, without spelling out my street address."),
-                    "prepare_change",{"kind":"default_address","parameters":address}))
-                self.decision(quote,text="Change only your profile default to the existing address on order "+self.case["order_id"]+". This does not change the order. Do you approve this exact profile update?")
+                self.decision(UserMessage(role="user",content="Keep the order. Change only my profile default to the address on this order, without spelling out my street address."),
+                    text="Change only your profile default to the existing address on order "+self.case["order_id"]+". This does not change the order. Do you approve this exact profile update?")
                 receipt=self.result(self.decision(UserMessage(role="user",content="Yes, submit that exact profile update using the order's address."),
                     "submit_change",{"kind":"default_address","parameters":address}))
                 final=self.decision(receipt,text="###COMPLETE### Your profile default now matches that order's address. The order remains unchanged.")
@@ -327,22 +330,20 @@ class ProductionAgentTests(unittest.TestCase):
         apply_native_reference(gold.environment.tools,"exchange",case["customer_id"],params)
         self.assertEqual(self.runtime.environment.get_db_hash(),gold.environment.get_db_hash())
 
-    def test_independent_changes_on_same_order_keep_their_quotes_and_share_approval(self):
+    def test_independent_changes_on_same_order_share_approval_without_extra_quotes(self):
         incoming=self.read_request("order_address")
         address=deepcopy(self.params)
         payment={"order_id":self.case["order_id"],"payment_method_id":self.case["payment_method_ids"]["paypal"]}
-        first=self.result(self.decision(incoming,"prepare_change",{"kind":"order_address","parameters":address}))
-        second=self.result(self.decision(first,"prepare_change",{"kind":"payment","parameters":payment}))
-        self.decision(second,text="Apply the complete new order address "+json.dumps(address["address"])+
+        self.decision(incoming,text="Apply the complete new order address "+json.dumps(address["address"])+
                       " and replace payment using "+payment["payment_method_id"]+" for the full charge, refunding the original. Do you approve both changes?")
-        self.assertEqual({p["state"] for p in self.state["proposals"].values()},{"prepared"})
+        self.assertEqual(self.state["proposals"],{})
         approval=UserMessage(role="user",content="I approve both exact changes. Apply the address and then replace payment.")
         result=self.result(self.decision(approval,"submit_change",{"kind":"order_address","parameters":address}))
         result=self.result(self.decision(result,"submit_change",{"kind":"payment","parameters":payment}))
         reply=self.decision(result,text="Both requested operations completed with separate actual receipts. ###STOP###")
         self.assertFalse(self.agent.is_stop(reply))
         self.assertEqual(len(self.writes()),2)
-        self.assertEqual({p["state"] for p in self.state["proposals"].values()},{"completed"})
+        self.assertEqual({p["state"] for p in self.state["submissions"].values()},{"completed"})
         _,gold,_=reference_kit()
         apply_native_reference(gold.environment.tools,"order_address",self.case["customer_id"],address)
         apply_native_reference(gold.environment.tools,"payment",self.case["customer_id"],payment)

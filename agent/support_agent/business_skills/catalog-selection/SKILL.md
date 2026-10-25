@@ -3,39 +3,30 @@ name: catalog-selection
 description: Find, count or rank variants under customer constraints; calculate selected values and price differences.
 ---
 
-After verification, related public products may be browsed even if not purchased.
-Read selected products, not every catalog before criteria are known. Reuse actual
-orders/catalogs; item IDs do not encode product relationships or size scales.
+After verification read relevant public products, including ones not purchased.
+Reuse observed facts. When verification already selects a named order and named
+products, batch those reads; do not also discover every order unnecessarily.
+Before criteria are known, ask for missing preferences rather than dump stock.
 
-Translate the customer's requirements, preserved options, priorities and fallback
-conditions into filters. Use query_product_variants for complex filtering/ranking;
-batch selected products in one call. Numeric comparisons require an explicit unit.
-Ask for all matches with no limit when all options/prices were requested; apply a
-limit for a requested best/top selection. List every relevant requested option and
-price. variant_count includes unavailable variants; available_variant_count does
-not. Invalid criteria are not a stock finding: use the returned vocabulary to fix
-them. Distinguish an absent configuration from one that exists but is unavailable.
+Translate ALL hard constraints into one query or batch ranked alternatives.
+Numeric comparisons require explicit units; never guess size scales. Respect
+priorities and fallbacks. If a requested configuration requires changing another
+attribute, explain that change in the proposal. Explicit same-except constraints
+must stay fixed. Propose a unique best match instead of asking the customer to
+choose it again. Use actual IDs; IDs do not encode product relationships.
 
-Same-product replacements must be available. Preserve attributes the customer did
-not authorize changing, with per-row preserve_options for different products.
-If priorities identify one best candidate, propose it without asking the customer
-to repeat their choice. Clarify only unresolved preferences. A reference to a
-variant in another owned order must use that actual record, not a guessed ID.
+query_product_variants filters available choices. Invalid vocabulary is not no
+stock. No limit when all matches/prices were requested; limit only for a best/top
+request. variant_count includes unavailable choices, available_variant_count does
+not. Use an obvious observed match without another query.
 
-Use calculate for derived arithmetic (add/subtract/multiply/divide/round), choosing
-formula and operands from facts. Reuse a recorded single price, an existing quote's
-row difference or item_price_total for its exact whole-item scope. The latter sums
-every item occurrence; it is neither payment net balance nor refund eligibility.
-For a financial inquiry about a subset, identify that subset and calculate its
-value even when the proposed write is unavailable; explain value separately from
-a refund currently permitted. Clarify genuinely ambiguous categories.
+Use calculate with ONE complete parenthesized arithmetic expression, or reuse a
+quote's calculations. item_price_total covers all item occurrences, not refunds;
+a selected subset needs its own sum even if its requested write is unsupported.
+Explain selected value separately from a permitted refund. Never substitute the
+whole order amount. A single recorded price or computed row difference is reusable.
+Quotes retain backend float(new-old) accumulation in request order, then round
+once to 2 digits; do not substitute per-row rounding or Decimal HALF_UP.
 
-Quotes compute replacement differences from the original sale and target prices:
-accumulate float(new-old) in request order and round the final total to 2 digits.
-Do not substitute per-row rounding or Decimal HALF_UP. The final receipt governs
-the actual settlement. Unavailable, invalid and missing values are never zero.
-
-Sources: meeting_transcript_01.vtt (facts/calculation controls); workspace_export.json
-RD5; INTERFACE-CLARIFICATIONS.md U3–U6 (catalog scope, quantities, money algorithm);
-process_map_01.png. Query limits and evidence reuse are engineering choices, not
-new customer policy. Customer requirements determine filters and ranking.
+Sources: meeting_transcript_01.vtt; process_map_01.png;
+INTERFACE-CLARIFICATIONS.md U3-U6. Query batching is an engineering choice.

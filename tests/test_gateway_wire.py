@@ -24,12 +24,12 @@ from tau2.data_model.message import AssistantMessage, MultiToolMessage, ToolCall
 def completion(*, arguments=None, content=None, calls=None, raw_text=False, explicit_claim=True):
     message = {"role": "assistant", "content": content}
     if arguments is not None:
-        arguments = {"claimed_customer_id": None, **arguments}
+        arguments = {"claimed_customer_id": None, "skill_names":["service-workflow"], **arguments}
         calls = [{"id": "wire-verify", "type": "function", "function": {
             "name": "verify_customer", "arguments": json.dumps(arguments)}}]
     if calls is not None:
         calls = [dict(call, function=dict(call["function"], arguments=json.dumps({
-                    "claimed_customer_id": None, **json.loads(call["function"]["arguments"])})))
+                    "claimed_customer_id": None, "skill_names":["service-workflow"], **json.loads(call["function"]["arguments"])})))
                  if explicit_claim and call["function"]["name"] == "verify_customer" else call
                  for call in calls]
         message["tool_calls"] = calls

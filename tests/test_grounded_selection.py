@@ -155,7 +155,7 @@ class GroundedSelectionTests(unittest.TestCase):
             "verify_customer", {"email":self.case["email"], "claimed_customer_id":None}))
         received = self.result(self.decision(received, "get_catalog_summary", {"product_name":product_name}))
         count = json.loads(received.content)["available_variant_count"]
-        received = self.result(self.decision(received, "list_customer_orders", {"include_details":True}))
+        received = self.result(self.decision(received, "read_context", {"include_order_details":True}))
         self.decision(received, text=f"There are {count} available variants. Which pending items and specifications would you like to change?")
         received = self.result(self.decision(UserMessage(role="user", content="Please use the selected available variant and preserve the requested options."),
             "prepare_change", {"kind":"modify_items", "parameters":self.params}))

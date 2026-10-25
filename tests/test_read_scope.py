@@ -215,6 +215,21 @@ class ReadScopeTests(unittest.TestCase):
         self.verify()
         self.assertEqual(self.kit.list_customer_orders(), {"order_ids": self.customer["order_ids"]})
 
+    def test_combined_verification_reuses_only_reads_from_that_same_action(self):
+        target=self.customer["order_ids"][0]
+        actual=self.kit.verify_customer(email=self.customer["email"],order_id=target,
+            include_order_details=True,skill_names=["address-changes"])
+        selected=[r for r in self.backend.calls if r["method"]=="GET"]
+        self.assertEqual(len([r for r in selected if r["path"]=="/v1/customers/"+self.customer["customer_id"]]),1)
+        from urllib.parse import quote
+        target_path="/v1/orders/"+quote(target,safe="")
+        self.assertEqual(len([r for r in selected if r["path"]==target_path]),1)
+        context=actual["requested_context"]
+        self.assertEqual(next(o for o in context["orders"] if o["order_id"]==target),actual["requested_order"])
+        before=len(self.backend.calls)
+        self.kit.get_owned_order(target)
+        self.assertTrue(any(r["path"]==target_path for r in self.backend.calls[before:]))
+
     def test_full_public_catalog_is_allowed_outside_purchase_history(self):
         self.verify()
         self.customer["order_ids"] = []
@@ -459,7 +474,7 @@ class ReadScopeTests(unittest.TestCase):
             provider.return_value = AssistantMessage(role="assistant", content="请提供账户邮编。")
             _, state = agent.generate_next_message(UserMessage(role="user", content="Li 是姓，名字是 Alex。"), state)
             provider.return_value = AssistantMessage(role="assistant", tool_calls=[ToolCall(id="verify_full_name", name="verify_customer",
-                arguments={"first_name": "Alex", "last_name": "Li", "postal_code": "10001", "claimed_customer_id": None})])
+                arguments={"first_name": "Alex", "last_name": "Li", "postal_code": "10001", "claimed_customer_id": None, "skill_names": ["service-workflow"]})])
             reply, state = agent.generate_next_message(UserMessage(role="user", content="刚才写错了，账户邮编是10001。"), state)
             self.assertEqual(self.backend.calls, [])
             self.assertEqual(provider.call_args.kwargs["messages"][1].content, "Li 是姓，名字是 Alex。")

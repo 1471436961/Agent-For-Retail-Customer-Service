@@ -23,6 +23,16 @@ def live_call(agent, name, args):
     """Construct a controlled current tool choice; legacy tests retain the old ABI."""
     if name == "submit_change" and name not in {action.name for action in agent.gateway.live_actions}:
         return next(key for key,value in DIRECT_WRITE_KINDS.items() if value == args["kind"]), deepcopy(args["parameters"])
+    if name == "verify_customer":
+        args = {"skill_names": ["service-workflow"], **args}
+    if name == "calculate" and "expression" not in args:
+        tool = next(a for a in agent.gateway.live_actions if a.name == name)
+        if "operation" not in tool.params.model_fields:
+            symbols = {"add":"+", "sum":"+", "subtract":"-", "difference":"-", "multiply":"*", "divide":"/"}
+            operation, values = args["operation"], args["values"]
+            expression = ("round(" + repr(values[0]) + ",2)" if operation == "round" else
+                          symbols[operation].join("(" + repr(v) + ")" for v in values))
+            args = {"expression":expression, **({"decimal_places":args["decimal_places"]} if "decimal_places" in args else {})}
     return name, deepcopy(args)
 
 
@@ -189,10 +199,11 @@ class TaskCompletionTests(unittest.TestCase):
         self.assertEqual(set(totals), {"original_total", "replacement_total"})
         from support_agent.skills import library
         policy = self.kit.get_service_policy("exchange")
-        instructions = library()[policy["skill"]]["instructions"]
+        from support_agent.skills import instructions_for, skill_bundle
+        instructions = instructions_for(skill_bundle([policy["skill"]])["names"])
         self.assertIn("no separate purchase", instructions)
         self.assertNotIn("3–6", instructions)
-        self.assertIn("3–6", library()[self.kit.get_service_policy("cancel")["skill"]]["instructions"])
+        self.assertIn("3-6", library()[self.kit.get_service_policy("cancel")["skill"]]["instructions"])
         self.assertEqual(self.writes(), [])
 
     def test_only_displayed_changes_with_a_later_customer_turn_have_executors(self):

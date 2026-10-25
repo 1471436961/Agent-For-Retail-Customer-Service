@@ -129,7 +129,7 @@ class T1RepairTests(unittest.TestCase):
         text = "Your verified account email is " + self.case["email"] + "."
         reply = self.decide(result, completion(content=text, raw_text=True))
         self.assertEqual(reply.content, text)
-        self.assertIn("Private answers require a successful actual", self.provider.call_args.kwargs["messages"][0]["content"])
+        self.assertIn("answers require a successful profile", self.provider.call_args.kwargs["messages"][0]["content"])
 
     def test_wrong_claim_never_reads_details_and_failed_result_is_not_evidence(self):
         reply = self.decide(self.user, completion(arguments={"email": self.case["email"],

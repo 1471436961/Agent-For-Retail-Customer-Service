@@ -6,7 +6,7 @@ from support_agent.adapters.customer_tools import CustomerTools, READ_ACTION_NAM
 from support_agent.domain.catalog import compare
 from support_agent.domain.changes import prepare, execution_evidence
 from support_agent.domain.identity import ReadError
-from support_agent.domain.money import calculate_values
+from support_agent.domain.money import calculate_values, calculate_expression
 from support_agent.adapters.write_api import write_once, resume_workflow, observed_receipt
 from support_agent.adapters.conversation_api import transfer_once
 from support_agent.domain.plans import order_requests
@@ -95,8 +95,9 @@ class ChangeTools(CustomerTools):
             return compare(self.get_product_variants(product_id), filters, sort_by, descending, numeric_unit)
 
     @is_tool(ToolType.READ)
-    def calculate(self, operation: Literal["add", "subtract", "multiply", "divide", "round", "sum", "difference", "price_difference"],
-                  values: list[float], decimal_places: int | None = None) -> dict:
+    def calculate(self, operation: Literal["add", "subtract", "multiply", "divide", "round", "sum", "difference", "price_difference"] | None = None,
+                  values: list[float] | None = None, decimal_places: int | None = None,
+                  expression: str = "") -> dict:
         """Perform general addition, subtraction, multiplication, division or rounding.
 
         The model determines operands from the user's request and business rules.
@@ -107,6 +108,10 @@ class ChangeTools(CustomerTools):
         Returns actual operands and result. Rejects non-finite numbers and zero
         divisors; never invents units or evaluates code. No business API calls.
         """
+        if expression:
+            if operation is not None or values is not None:
+                raise ReadError("choose_expression_or_legacy_operands")
+            return calculate_expression(expression, decimal_places)
         return calculate_values(operation, values, decimal_places)
 
     @is_tool(ToolType.READ)
@@ -361,7 +366,7 @@ class ChangeTools(CustomerTools):
     @is_tool(ToolType.WRITE)
     def request_exchange(self, order_id: str, replacements: list[ReplacementChoice], payment_method_id: str,
                          preserve_options: list[str] | None = None, specific_instance: bool = False, request_id: str = "") -> dict:
-        """Register the COMPLETE approved delivered-order exchange once. Use available same-product replacements, including an identical variant, and one saved method for the difference. Keep ordered duplicates and per-row constraints. Acceptance is not settlement or shipment. request_id is bound by the Agent."""
+        """Register the COMPLETE approved delivered exchange once. Use available same-product variants with different options and one saved settlement method. Keep ordered duplicates and per-row constraints. Acceptance is not settlement or shipment. request_id is bound by the Agent."""
         return self.submit_change("exchange", {"order_id": order_id, "replacements": replacements,
             "payment_method_id": payment_method_id, "preserve_options": preserve_options or [],
             "specific_instance": specific_instance}, request_id)

@@ -159,11 +159,13 @@ class CustomerTools(ClientAPIToolKitBase):
                         **({"business_skills": selected_skills} if selected_skills is not None else {}),
                         "profile_error": {"code": error.code, "operation": error.operation,
                                           "http_status": error.http_status}}
+            current_orders = {}
             if order_id:
                 try:
                     selected = self._initial_order_reference(resource_id(order_id), profile["order_ids"])
                     profile["requested_order"] = self._read_owned_order(
                         selected, profile, include_product_variants)
+                    current_orders[selected] = deepcopy(self._observed_orders[selected])
                     if selected != order_id:
                         profile["requested_order_reference"] = {"input": order_id, "order_id": selected}
                 except ReadError as error:
@@ -171,8 +173,9 @@ class CustomerTools(ClientAPIToolKitBase):
                                                         "http_status": error.http_status}
             if include_order_details or product_names:
                 try:
-                    profile["requested_context"] = self.read_context(
-                        include_order_details=include_order_details, product_names=product_names)
+                    profile["requested_context"] = self._context_read(
+                        include_order_details=include_order_details, product_names=product_names,
+                        profile=profile, current_orders=current_orders)
                 except ReadError as error:
                     profile["requested_context_error"] = {"code": error.code, "operation": error.operation,
                                                           "http_status": error.http_status}
@@ -307,6 +310,15 @@ class CustomerTools(ClientAPIToolKitBase):
         within this read; every order's actual owner is checked too. Failure
         yields no partial response. No consent or business write is involved.
         """
+        return self._context_read(order_ids, include_order_details, product_ids, product_names)
+
+    def _context_read(self, order_ids=None, include_order_details=False, product_ids=None,
+                      product_names=None, *, profile=None, current_orders=None):
+        """Reuse only facts read inside THIS verification/read action.
+
+        Cross-call observations are not a freshness cache. Write preflight still
+        reads current backend records independently.
+        """
         if (type(include_order_details) is not bool or
                 (order_ids is not None and not isinstance(order_ids, list))):
             raise ReadError("invalid_context_selection")
@@ -319,10 +331,19 @@ class CustomerTools(ClientAPIToolKitBase):
             self._customer_id()
             result = {}
             if include_order_details or identifiers:
-                profile = self._profile()
+                profile = self._profile() if profile is None else profile
                 selected = profile["order_ids"] if include_order_details else identifiers
+                orders = []
+                for value in dict.fromkeys(selected):
+                    if current_orders and value in current_orders:
+                        record = current_orders[value]
+                        if value not in profile["order_ids"] or record["customer_id"] != self._customer_id():
+                            raise ReadError("order_access_denied")
+                        orders.append(self._order_view(record))
+                    else:
+                        orders.append(self._read_owned_order(value, profile))
                 result.update(customer_id=profile["customer_id"], order_ids=profile["order_ids"],
-                    orders=[self._read_owned_order(value, profile) for value in dict.fromkeys(selected)])
+                    orders=orders)
             if product_ids or product_names:
                 result.update(self.read_products(product_ids=product_ids, product_names=product_names))
             return result

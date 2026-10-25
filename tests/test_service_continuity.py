@@ -55,20 +55,18 @@ class ServiceContinuityTests(unittest.TestCase):
         wrong = {"order_id":self.case["order_id"],"replacements":[],
                  "payment_method_id":self.case["payment_method_ids"]["credit_card"]}
         before = len(self.requests)
+        self.decision(received,text="Update only this pending order to "+json.dumps(self.params["address"])+". Do you approve this complete change?")
         self.model.side_effect = [
-            AssistantMessage(role="assistant",tool_calls=[ToolCall(id="bad-address-shape",name="prepare_change",
-                arguments={"kind":"order_address","parameters":wrong})]),
-            AssistantMessage(role="assistant",tool_calls=[ToolCall(id="real-address-shape",name="prepare_change",
-                arguments={"kind":"order_address","parameters":self.params})]),
+            AssistantMessage(role="assistant",tool_calls=[ToolCall(id="bad-address-shape",name="update_order_address", arguments=wrong)]),
+            AssistantMessage(role="assistant",tool_calls=[ToolCall(id="real-address-shape",name="update_order_address", arguments=self.params)]),
         ]
-        reply,self.state = self.agent.generate_next_message(received,self.state)
+        reply,self.state = self.agent.generate_next_message(UserMessage(role="user",content="I approve that exact address. Submit it."),self.state)
         self.assertEqual(reply.tool_calls[0].id,"real-address-shape")
         feedback = self.model.call_args.kwargs["messages"][-1].content
-        self.assertIn("order_address",feedback)
-        self.assertIn("address, order_id",feedback)
+        self.assertIn("schema",feedback)
         self.assertEqual(len(self.requests),before)
-        self.assertEqual(json.loads(self.result(reply).content)["state"],"prepared")
-        self.assertEqual(self.writes(),[])
+        self.assertEqual(json.loads(self.result(reply).content)["state"],"completed")
+        self.assertEqual(len(self.writes()),1)
         with self.assertRaises(ValueError):
             PlanRequest.model_validate({"kind":"order_address","parameters":wrong})
 
@@ -133,16 +131,16 @@ class ServiceContinuityTests(unittest.TestCase):
         self.assertEqual(len(self.writes()),1)
 
     def test_typed_write_reuses_quote_and_batch_replay_without_reposting(self):
-        received = self.verify("return")
-        quoted = self.result(self.decision(received,"prepare_change",{"kind":"return","parameters":self.params}))
+        received = self.verify("exchange")
+        quoted = self.result(self.decision(received,"prepare_change",{"kind":"exchange","parameters":self.params}))
         proposal_id = json.loads(quoted.content)["proposal_id"]
-        self.decision(quoted,text="Return exactly these recorded items to their original method. Do you approve this complete request?")
-        call = self.decision(UserMessage(role="user",content="I approve that exact complete return. Submit it."),
-                             "request_return",self.params)
+        self.decision(quoted,text="Exchange exactly these recorded items for the quoted replacements and saved method. Do you approve this complete request?")
+        call = self.decision(UserMessage(role="user",content="I approve that exact complete exchange. Submit it."),
+                             "request_exchange",self.params)
         receipt = self.result(call)
         outcome = json.loads(receipt.content)
         self.assertEqual(outcome["proposal_id"],proposal_id)
-        row = {"kind":"return","parameters":deepcopy(self.params),
+        row = {"kind":"exchange","parameters":deepcopy(self.params),
                "request_id":call.tool_calls[0].arguments["request_id"]}
         before = len(self.requests)
         replay = self.kit.submit_changes([row])
@@ -180,7 +178,7 @@ class ServiceContinuityTests(unittest.TestCase):
         self.assertEqual(restored["proposals"],{})
         self.assertFalse(restored["pending_call_ids"])
 
-    def test_identical_delivered_replacement_matches_native_backend(self):
+    def test_policy_rejects_identical_variant_before_backend_submission(self):
         received = self.verify()
         observed = json.loads(received.content)["requested_order"]
         original = next(item for item in observed["items"] if any(
@@ -189,26 +187,20 @@ class ServiceContinuityTests(unittest.TestCase):
         params = {"order_id":self.case["order_id"],"replacements":[{
             "existing_item_id":original["item_id"],"replacement_item_id":original["item_id"]}],
             "payment_method_id":self.case["payment_method_ids"]["credit_card"]}
-        quote = self.result(self.decision(received,"prepare_change",{"kind":"exchange","parameters":params}))
-        self.assertEqual(float(json.loads(quote.content)["facts"]["calculations"][0]["result"]),0)
-        gold = RetailPlusTools(self.runtime.environment.tools.db.model_copy(deep=True))
-        self.decision(quote,text="Replace this delivered damaged unit with the identical available variant, zero price difference, using your saved card. Is that the complete exchange you approve?")
-        receipt = self.result(self.decision(UserMessage(role="user",content="Yes, submit that exact replacement."),
-            "submit_change",{"kind":"exchange","parameters":params}))
-        self.assertEqual(json.loads(receipt.content)["state"],"accepted")
-        apply_native_reference(gold,"exchange",self.case["customer_id"],params)
-        self.assertEqual(self.runtime.environment.tools.db.model_dump(),gold.db.model_dump())
-        self.assertEqual(len(self.writes()),1)
+        with self.assertRaisesRegex(ReadError,"unchanged_item"):
+            self.kit.prepare_change("exchange",params)
+        with self.assertRaisesRegex(ReadError,"unchanged_item"):
+            self.kit.submit_change("exchange",params,"same-spec-not-authorized")
+        self.assertEqual(self.writes(),[])
 
-    def test_switching_operation_retires_draft_in_the_new_quote(self):
+    def test_revised_item_quote_retires_previous_draft(self):
         received = self.verify()
-        returns = {"order_id":self.case["order_id"],
-                   "item_ids":[self.params["replacements"][0]["existing_item_id"]],
-                   "refund_payment_method_id":self.case["payment_method_ids"]["credit_card"]}
-        first = self.result(self.decision(received,"prepare_change",{"kind":"return","parameters":returns}))
-        self.decision(first,text="Return the selected delivered item to the original saved card. Do you approve this complete return?")
-        second = self.result(self.decision(UserMessage(role="user",content="Do not return it. I want an exchange instead."),
-            "prepare_change",{"kind":"exchange","parameters":self.params,"supersedes":["proposal-1"]}))
+        first = self.result(self.decision(received,"prepare_change",{"kind":"exchange","parameters":self.params}))
+        self.decision(first,text="Here are the complete quoted replacements and settlement. Do you approve this exchange?")
+        revised=deepcopy(self.params)
+        revised["payment_method_id"]=self.case["payment_method_ids"]["credit_card"]
+        second = self.result(self.decision(UserMessage(role="user",content="Use my saved card for the same exchange instead."),
+            "prepare_change",{"kind":"exchange","parameters":revised,"supersedes":["proposal-1"]}))
         self.assertEqual(json.loads(second.content)["superseded_proposal_ids"],["proposal-1"])
         self.decision(second,text="Here is the replacement and actual quoted difference for the complete exchange. Do you approve this exchange instead?")
         self.assertEqual(self.state["proposals"]["proposal-1"]["state"],"superseded")
@@ -243,10 +235,8 @@ class ServiceContinuityTests(unittest.TestCase):
 
     def test_two_returns_share_confirmation_and_match_native_database(self):
         received,rows = self.two_orders()
-        quote = self.result(self.decision(received,"prepare_changes",{"requests":rows}))
-        self.assertEqual(len(json.loads(quote.content)["changes"]),2)
         gold = RetailPlusTools(self.runtime.environment.tools.db.model_copy(deep=True))
-        self.decision(quote,text="Return all listed items in both delivered orders, each to its own original method. These are two separate applications. Do you approve both full requests?")
+        self.decision(received,text="Return all listed items in both delivered orders, each to its own original method. These are two separate applications. Do you approve both full requests?")
         call = self.decision(UserMessage(role="user",content="Yes, submit both complete returns to their original methods."),
             "submit_changes",{"requests":rows})
         bound = deepcopy(call.tool_calls[0].arguments["requests"])
@@ -297,8 +287,7 @@ class ServiceContinuityTests(unittest.TestCase):
 
     def test_batch_unknown_result_preserves_prior_success_and_never_reposts(self):
         received,rows = self.two_orders()
-        quote = self.result(self.decision(received,"prepare_changes",{"requests":rows}))
-        self.decision(quote,text="Submit both complete returns to each original method. Do you approve?")
+        self.decision(received,text="Submit both complete returns to each original method. Do you approve?")
         original_transport = self.kit.client_api._transport
         uncertain_path = "/v1/orders/%23SYNTHETIC-SECOND-ORDER/returns"
         def transport(request):
@@ -402,8 +391,9 @@ class ServiceContinuityTests(unittest.TestCase):
                 def provider(**kwargs):
                     choice = schedule[self.model.call_count-1]
                     if isinstance(choice,tuple):
+                        name,args = completion.live_call(self.agent,choice[0],choice[1])
                         return AssistantMessage(role="assistant",tool_calls=[ToolCall(
-                            id=f"routing-{self.model.call_count}",name=choice[0],arguments=choice[1])])
+                            id=f"routing-{self.model.call_count}",name=name,arguments=args)])
                     if choice == "identity":
                         text = "Please provide your account email or full name and postal code."
                     elif choice == "recap":

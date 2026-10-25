@@ -7,7 +7,7 @@ from typing import Literal, get_args
 
 SkillName = Literal["service-workflow", "catalog-selection", "address-changes",
     "order-cancellation", "order-payment", "item-updates", "delivered-returns",
-    "delivered-exchanges", "human-handoff"]
+    "delivered-exchanges", "human-handoff", "delivered-service"]
 SKILL_NAMES = get_args(SkillName)
 KINDS = ("default_address", "order_address", "cancel", "payment", "modify_items", "return", "exchange")
 
@@ -33,7 +33,7 @@ def library():
         # The supported metadata subset is inline JSON (valid YAML), so the
         # production package needs no extra YAML parser dependency.
         routing = json.loads(meta.get("metadata", "{}"))
-        if (not isinstance(routing, dict) or set(routing) - {"requires", "operations"} or
+        if (not isinstance(routing, dict) or set(routing) - {"requires", "operations", "visibility"} or
                 any(not isinstance(value, str) for value in routing.values())):
             raise ValueError("Invalid skill routing metadata")
         requires = tuple(filter(None, routing.get("requires", "").split(",")))
@@ -42,12 +42,12 @@ def library():
             raise ValueError("Invalid skill dependencies or operations")
         result[name] = {"name": name, "description": meta["description"], "requires": requires,
                         "operations": operations, "version": sha256(text.encode()).hexdigest()[:16],
-                        "instructions": body.strip()}
+                        "instructions": body.strip(), "visibility": routing.get("visibility", "public")}
     return result
 
 
 def skill_index():
-    return "\n".join(name + ": " + row["description"] for name, row in library().items())
+    return "\n".join(name + ": " + row["description"] for name, row in library().items() if row["visibility"] == "public")
 
 
 def skill_bundle(names):
@@ -67,8 +67,9 @@ def skill_bundle(names):
         ordered.append(name)
     for name in names:
         include(name)
-    return {"names": ordered, "versions": {name: library()[name]["version"] for name in ordered},
-            "instructions": {name: library()[name]["instructions"] for name in ordered}}
+    # Tool trajectories (including judge input) need only an activation receipt.
+    # The Agent loads current trusted bodies once, outside the tool transcript.
+    return {"names": ordered, "versions": {name: library()[name]["version"] for name in ordered}}
 
 
 def active_skill_names(history):
@@ -76,12 +77,13 @@ def active_skill_names(history):
     calls, active = {}, ()
     for row in history:
         for call in row.get("tool_calls") or []:
-            calls[call["id"]] = call["name"]
+            calls[call["id"]] = call
         results = row.get("tool_messages", []) if row["role"] == "tool" else []
         if row["role"] == "tool" and "id" in row:
             results = [row]
         for result in results:
-            if result.get("error") or calls.get(result["id"]) not in {"load_skills", "verify_customer"}:
+            call = calls.get(result["id"], {})
+            if result.get("error") or call.get("name") not in {"load_skills", "verify_customer"}:
                 continue
             try:
                 value = json.loads(result["content"])
@@ -89,12 +91,21 @@ def active_skill_names(history):
                 # A malformed ordinary read remains an explicit failed result
                 # in the wire projection, not a policy activation or fatal halt.
                 continue
-            if not isinstance(value, dict) or "business_skills" not in value:
+            if not isinstance(value, dict):
                 continue
-            actual = value["business_skills"]
-            expected = skill_bundle(actual["names"])
-            if actual != expected:
-                raise ValueError("Skill read does not match packaged version")
+            arguments = call.get("arguments", {})
+            requested = arguments.get("names") if call["name"] == "load_skills" else arguments.get("skill_names")
+            if not requested:
+                if call["name"] == "verify_customer" and value.get("customer_id"):
+                    active = tuple(skill_bundle(["service-workflow"])["names"])
+                continue  # Historical sessions get shared rules, not a policy-free path.
+            actual = value.get("business_skills")
+            if not isinstance(actual, dict) or not set(requested) <= set(actual.get("names", [])):
+                continue
+            # Rehydrate CURRENT packaged dependencies. Historical version changes
+            # or untrusted receipt prose must neither become instructions nor
+            # erase an otherwise valid conversation.
+            expected = skill_bundle(requested)
             active = tuple(expected["names"])
     return active
 

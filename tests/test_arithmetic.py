@@ -65,19 +65,19 @@ class ArithmeticWireTests(unittest.TestCase):
         actual = self.kit.get_tools()[call.name](**call.arguments)
         incoming = ToolMessage(role="tool", id=call.id, content=json.dumps(actual))
         requests_before = len(self.backend.calls)
-        for index, (operation, values, expected) in enumerate((
-            ("multiply", [12, 3.5], 42), ("divide", [42, 2], 21),
-            ("subtract", [21, 5, 1], 15), ("add", [15, 2], 17),
+        for index, (expression, expected) in enumerate((
+            ("12 * 3.5", 42), ("42 / 2", 21),
+            ("21 - 5 - 1", 15), ("15 + 2", 17),
         )):
             self.provider.return_value = wire.completion(calls=[{
                 "id": f"arithmetic-{index}", "type": "function", "function": {
-                    "name": "calculate", "arguments": json.dumps({"operation": operation, "values": values})}}])
+                    "name": "calculate", "arguments": json.dumps({"expression": expression})}}])
             reply, state = self.agent.generate_next_message(incoming, state)
             self.assertIsNone(state["halt_reason"], state)
             schemas = self.provider.call_args.kwargs["tools"]
             calculator = next(tool["function"] for tool in schemas if tool["function"]["name"] == "calculate")
-            self.assertEqual(set(calculator["parameters"]["properties"]["operation"]["enum"]),
-                             {"add", "subtract", "multiply", "divide", "round"})
+            self.assertEqual(set(calculator["parameters"]["properties"]), {"expression", "decimal_places"})
+            self.assertEqual(calculator["parameters"]["required"], ["expression"])
             call = reply.tool_calls[0]
             actual = self.kit.get_tools()[call.name](**call.arguments)
             self.assertEqual(actual["result"], expected)
@@ -89,7 +89,7 @@ class ArithmeticWireTests(unittest.TestCase):
         history = state["history"]
         old = next(row for row in history if row.get("tool_calls") and row["tool_calls"][0]["name"] == "calculate")
         legacy = old["tool_calls"][0]
-        legacy["arguments"]["operation"] = "sum"
+        legacy["arguments"] = {"operation": "sum", "values": [12, 30]}
         actual_legacy = self.kit.calculate(**legacy["arguments"])
         historical_result = next(row for row in history if row["role"] == "tool" and row.get("id") == legacy["id"])
         historical_result["content"] = json.dumps(actual_legacy)

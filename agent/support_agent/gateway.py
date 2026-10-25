@@ -15,7 +15,36 @@ from support_agent.config import PREFERRED_MODEL
 from support_agent.domain.money import ArithmeticOperation
 from support_agent.domain.presentation import proposal_view
 from support_agent.adapters.change_parameters import ChangeParameters, PlanRequest, SubmissionRequest, PARAMETERS_BY_KIND
-from support_agent.skills import active_skill_names, operations_for, policy_reference
+from support_agent.skills import SkillName, policy_reference
+from support_agent.adapters.read_models import Record, NonEmpty
+from support_agent.adapters.change_parameters import ReplacementParameters
+
+
+def _without_schema_titles(schema):
+    """Drop display-only labels, preserving fields, defaults and every constraint."""
+    if not isinstance(schema, dict):
+        return schema
+    result = {key: value for key, value in schema.items() if key != "title"}
+    for key in ("properties", "$defs", "patternProperties", "dependentSchemas"):
+        if isinstance(result.get(key), dict):
+            result[key] = {name: _without_schema_titles(value) for name, value in result[key].items()}
+    for key in ("anyOf", "oneOf", "allOf", "prefixItems"):
+        if isinstance(result.get(key), list):
+            result[key] = [_without_schema_titles(value) for value in result[key]]
+    for key in ("items", "additionalProperties", "contains", "not", "if", "then", "else"):
+        if isinstance(result.get(key), dict):
+            result[key] = _without_schema_titles(result[key])
+    return result
+
+
+def _compact_parameters(model):
+    # Restrict compaction to the advertised schema. Pydantic validation and
+    # callable/history parameter models retain exactly the same constraints.
+    class CompactParameters(model):
+        @classmethod
+        def model_json_schema(cls, *args, **kwargs):
+            return _without_schema_titles(super().model_json_schema(*args, **kwargs))
+    return CompactParameters
 
 
 @dataclass(frozen=True)
@@ -69,14 +98,14 @@ class GatewayAdapter:
         # compatibility tests. New single writes have operation-specific schemas;
         # all paths still share the same business validation and executor.
         self.compatibility_actions = self.live_actions
-        live_names = {"verify_customer", "get_customer_summary", "list_customer_orders",
+        live_names = {"verify_customer", "get_customer_summary",
                       "get_owned_order", "list_products", "read_products", "read_context",
-                      "get_catalog_summary", "query_product_variants", "calculate", "prepare_change", "prepare_changes", "load_skills",
+                      "get_catalog_summary", "query_product_variants", "calculate", "prepare_change", "load_skills",
                       "submit_changes", "invalidate_change", "inspect_change_result",
-                      "get_service_status", "transfer_to_human", *DIRECT_WRITE_KINDS}
+                      "transfer_to_human", *DIRECT_WRITE_KINDS} - {"list_products"}
         self.live_actions = tuple(action for action in self.live_actions if action.name in live_names)
         descriptions = {
-            "verify_customer": "Verify email OR full name+postal_code; match claimed_customer_id (null only if absent). Include named order_id; include_order_details discovers owned orders. skill_names loads relevant procedures in this call. Optional reads follow verification. Recover profile failure via get_customer_summary.",
+            "verify_customer": "Verify email OR full name+postal_code and match a claimed ID. Select skill_names. Include a named order_id; use include_order_details only for discovery/multi-order scope. product_names batches already named related catalogs AFTER verification. Do not discover all orders for one named order. Recover profile failure via get_customer_summary.",
             "get_customer_summary": "Read the verified profile, saved methods and owned order IDs.",
             "list_customer_orders": "Read owned order IDs; include_details reads each owned order. No inferred recency.",
             "get_owned_order": "Read exact owned order_id, preserving #. Optional include_product_variants reads related catalogs.",
@@ -85,9 +114,9 @@ class GatewayAdapter:
             "read_context": "Batch explicit owned orders and selected products. include_order_details discovers all owned orders. No writes.",
             "get_catalog_summary": "Count product types or variants; exact product_name selects a catalog. Available and total counts differ.",
             "query_product_variants": "Batch exact filters, explicit numeric comparisons and sorting of available variants. No limit for all matches. Invalid criteria are not a stock finding.",
-            "calculate": "General add/subtract/multiply/divide/round. Model selects operands; optional final decimal_places. Returns input trace.",
+            "calculate": "Evaluate ONE complete parenthesized arithmetic expression (+ - * / and round). Model selects the formula. Optional decimal_places rounds the final result. Reuse known calculations; do not split one formula into repeated calls.",
             "load_skills": "Load named business skills with dependencies, REPLACING active skills. Public read only; no customer API or approval. Retain multiple skills for mixed goals.",
-            "prepare_change": "Optional read-only quote for missing facts/calculations. parameters must match kind. supersedes replaces drafts; after recap+approval use the write tool.",
+            "prepare_change": "Optional READ-ONLY item quote: modify_items or exchange. Returns row and net differences for the full replacement list. Reuse those when removing rows. Other operations use actual recorded facts/calculator, then their write tool after approval. supersedes replaces drafts.",
             "prepare_changes": "Batch optional read-only quotes for explicit changes; no submission or cross-operation atomicity.",
             "submit_changes": "WRITE approved explicit changes sequentially, each with fresh checks. Separate actual outcomes; stops on failure/uncertainty. Agent binds request_id.",
             "invalidate_change": "Withdraw an unsubmitted draft without replacement; not cancellation of a registered request.",
@@ -110,6 +139,24 @@ class GatewayAdapter:
             }),
             "short_desc": descriptions[action.name], "long_desc": "",
         }) if action.name in descriptions else action for action in self.live_actions)
+        # One current formula interface, with the old operand ABI kept only in
+        # callable/history schemas. Item quotes also have one concrete shape.
+        focused = []
+        for action in self.live_actions:
+            params = action.params
+            if action.name == "calculate":
+                params = create_model("ExpressionArithmetic", __base__=Record,
+                    expression=(NonEmpty, Field(...)), decimal_places=(int | None, None))
+            elif action.name == "verify_customer":
+                params = create_model("SelectedVerification", __base__=params,
+                    skill_names=(list[SkillName], Field(..., min_length=1,
+                        description="Relevant business procedures, or service-workflow for general profile help.")))
+            elif action.name == "prepare_change":
+                params = create_model("ItemQuote", __base__=PlanRequest,
+                    kind=(Literal["modify_items", "exchange"], Field(...)),
+                    parameters=(ReplacementParameters, Field(...)), supersedes=(list[str] | None, None))
+            focused.append(action.model_copy(update={"params": _compact_parameters(params)}))
+        self.live_actions = tuple(focused)
         if any(action.info.get("tool_type") not in {"read", "write", "generic"} for action in self.actions):
             raise ValueError("Unsupported action type")
         self.model, self.options = self._select_configuration()
@@ -156,19 +203,13 @@ class GatewayAdapter:
                            and state.user_turn > state.quote_response_turns[key]}
             actions = tuple(action for action in self.live_actions
                          if action.name != "verify_customer"
-                         if (action.name not in EXECUTE_ACTIONS or EXECUTE_ACTIONS[action.name] in ready_kinds)
-                         and (action.name not in {DIRECT_ACTION, BATCH_DIRECT_ACTION, *DIRECT_WRITE_KINDS} or has_prior_assistant_turn(state)))
-            selected = active_skill_names(state.history)
-            kinds = operations_for(selected) if selected else None
-            if selected:
-                actions = tuple(action for action in actions
-                    if action.name not in DIRECT_WRITE_KINDS or DIRECT_WRITE_KINDS[action.name] in kinds
-                    if kinds or action.name not in {"prepare_change", "prepare_changes", BATCH_DIRECT_ACTION}
-                    if "catalog-selection" in selected or action.name not in {
-                        "list_products", "read_products", "get_catalog_summary", "query_product_variants"})
-            key = (tuple(action.name for action in actions), tuple(state.owned_order_ids or []), kinds)
+                         if (action.name not in EXECUTE_ACTIONS or EXECUTE_ACTIONS[action.name] in ready_kinds))
+            # Skill selection controls knowledge, not business capabilities.
+            # State validation still rejects writes without real recap chronology;
+            # the toolkit independently verifies identity/ownership/current facts.
+            key = (tuple(action.name for action in actions), tuple(state.owned_order_ids or []))
             if key not in self._grounded_cache:
-                self._grounded_cache[key] = self._ground_order_ids(actions, state.owned_order_ids, kinds)
+                self._grounded_cache[key] = self._ground_order_ids(actions, state.owned_order_ids)
             return self._grounded_cache[key]
         return tuple(action for action in self.live_actions if action.name in {
             "verify_customer", "transfer_to_human", "load_skills",
@@ -202,8 +243,13 @@ class GatewayAdapter:
             elif action.name == "read_context":
                 fields["order_ids"] = (list[order_id] | None, Field(default=None))
             elif action.name in {"prepare_change", "submit_change"}:
-                fields["parameters"] = (changes, Field(...))
-                fields.update(kind_field)
+                selected_kinds = get_args(action.params.model_fields["kind"].annotation)
+                if selected_kinds == ("modify_items", "exchange"):
+                    fields["parameters"] = (create_model("OwnedItemQuote", __base__=ReplacementParameters,
+                        order_id=(order_id, Field(...))), Field(...))
+                else:
+                    fields["parameters"] = (changes, Field(...))
+                    fields.update(kind_field)
             elif action.name == "prepare_changes":
                 fields["requests"] = (list[quote_request], Field(...))
             elif action.name == BATCH_DIRECT_ACTION:

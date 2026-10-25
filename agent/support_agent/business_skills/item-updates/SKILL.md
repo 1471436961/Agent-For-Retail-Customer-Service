@@ -4,27 +4,21 @@ description: Change pending order variants, preserving quantities and customer c
 metadata: {"requires":"service-workflow,catalog-selection","operations":"modify_items"}
 ---
 
-Only an owned pending order permits item modification. Select different available
-variants of the same product, preserving all options the customer did not agree
-to change. Pending modification rejects an unchanged item ID; this does not ban
-identical-unit replacement in a delivered exchange. No quantity editing.
+Only an owned pending order permits item updates. Select available same-product
+variants with different options; preserve attributes the customer did not agree
+to change. No quantity edits. Keep duplicate counts and per-row preserve_options.
 
-Collect the complete per-order replacement list before submission and make clear
-that no additional item changes can be appended afterward. Include all requested
-changes in the final recap and allow the customer to complete/correct the list.
-Preserve duplicate IDs and counts. Confirm changes for each eligible order; when
-one order cannot be changed, follow the customer's instructions for other orders.
+Collect the complete per-order list. In the final recap explicitly ask whether
+there are any other items to change before submission, and wait for the answer.
+This can be combined with approval of the complete proposal. No second pass or
+undo is available. Follow the customer's instructions for other eligible orders
+when one cannot be changed.
 
-Quote the net difference from actual prices using the prescribed calculation.
-One saved method pays or receives it. For a positive difference a gift card must
-cover the full difference; no split settlement. A requested insufficient gift
-card does not authorize charging another method: propose an eligible fallback.
+Use a quote for missing row/net differences, or one complete calculator formula.
+One saved method pays/receives the difference. Gift balance must cover the full
+positive difference; insufficient balance does not authorize a different method.
+Propose and confirm an eligible fallback. After approval use modify_order_items.
+Status becomes pending (items modified); complete address/payment changes first.
 
-After approval use modify_order_items(order_id,replacements,payment_method_id).
-The result moves to pending (items modified); no further order actions can be
-assumed. Finish approved address/payment changes first. Do not add notes, flags,
-synthetic quantities or hidden fields to the documented write surface.
-
-Sources: process_map_01.png; meeting_transcript_01.vtt (full list, one-time change);
-system_export.zip/policy_contracts.json CONTRACT-1001/1003 (current published write set);
-INTERFACE-CLARIFICATIONS.md U5/U6 (occurrences and algorithm).
+Sources: process_map_01.png (full-list last-call question); meeting_transcript_01.vtt;
+system_export.zip CONTRACT-1001/1003; INTERFACE-CLARIFICATIONS.md U5/U6.

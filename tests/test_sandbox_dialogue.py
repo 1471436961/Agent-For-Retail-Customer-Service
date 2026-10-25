@@ -46,7 +46,8 @@ class SandboxDialogueTests(unittest.TestCase):
             {"role": "assistant", "content": None, "tool_calls": [{
                 "id": "loopback-verify", "type": "function", "function": {
                     "name": "verify_customer", "arguments": json.dumps({
-                        "email": "alex.p0@example.test", "claimed_customer_id": "p0_customer_a"})}}]},
+                        "email": "alex.p0@example.test", "claimed_customer_id": "p0_customer_a",
+                        "skill_names":["service-workflow"]})}}]},
             {"role": "assistant", "content": "email: alex.p0@example.test ###STOP###"},
         ]
 

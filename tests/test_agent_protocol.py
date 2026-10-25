@@ -40,7 +40,7 @@ def call(identifier="lookup_1", **changes):
               "arguments": {"claimed_customer_id": None, "email": "alex.p0@example.test"}}
     values.update(changes)
     if values["name"] == "verify_customer":
-        values["arguments"] = {"claimed_customer_id": None, **values["arguments"]}
+        values["arguments"] = {"claimed_customer_id": None, "skill_names":["service-workflow"], **values["arguments"]}
     return ToolCall(**values)
 
 
@@ -340,7 +340,7 @@ class ProtocolTests(unittest.TestCase):
             '{"customer_id":"p0_customer_a","email":"alex.p0@example.test"}'))
         for index in range(18):
             self.provider.return_value = calls_reply(call(f"read-{index}",
-                name="list_customer_orders", arguments={}))
+                name="read_context", arguments={}))
             reply, state = self.agent.generate_next_message(incoming, state)
             self.assertIsNone(state["halt_reason"])
             incoming = results(tool_result(reply.tool_calls[0].id, '{"order_ids":[]}'))

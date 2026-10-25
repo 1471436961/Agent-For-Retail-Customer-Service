@@ -26,7 +26,7 @@ P2新增 [p2_backend.py](p2_backend.py)：根据下述合成记录提供六个�
 在仓库根目录执行：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\check-p0-baseline.py --report evaluation-results\baseline.json
+.\.venv\Scripts\python.exe scripts\verify-offline.py
 ```
 
-检查正常 schema、负例确实被拒绝、operation 完整性、来源 hash、fixture 的引用和货币类型一致性。依赖 jsonschema，已随本地 tau2 核心依赖安装。检查不运行 LLM、业务写入或远程评测；不能作为 Agent 行为通过的证明。
+[native_runtime.py](native_runtime.py) 把合成记录与公开开发种子放入已安装的真实 SDK 数据库；当前回归实际执行读写，并与独立原生工具的最终数据库比对。另测 schema、非法金额、身份/归属、状态别名、限流和异步结果。只模拟模型输出，不调用付费模型或远程评测，不证明真实模型的语义能力。旧基线脚本和写入模拟夹具已退役。

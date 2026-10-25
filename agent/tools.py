@@ -1,7 +1,7 @@
 """Platform tool discovery entry point."""
 
-from support_agent.adapters.change_tools import ChangeTools
+from support_agent.tools_impl import RetailTools
 
 
-class Tools(ChangeTools):
-    """Provide real reads, grounded quotes, one canonical write channel and handoff."""
+class Tools(RetailTools):
+    """Expose the stable customer API tools."""

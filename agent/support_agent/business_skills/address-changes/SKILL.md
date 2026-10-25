@@ -18,8 +18,8 @@ scope without reprinting private street fields unless requested. Reuse accessibl
 facts. A later profile-only restoration uses the actual original profile in
 history and leaves order addresses unchanged.
 
-Use update_default_address or update_order_address; approved multi-record work
-uses submit_changes. Report actual receipts and ineligible/failed targets.
+Use update_default_address or update_order_address for the approved targets.
+Report their separate actual receipts and any ineligible/failed targets.
 
 Sources: process_map_05.png; meeting_transcript_01.vtt/02.vtt;
 system_export.zip CONTRACT-1001/1002; INTERFACE-CLARIFICATIONS.md U3/U6.

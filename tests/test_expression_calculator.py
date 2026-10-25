@@ -1,6 +1,6 @@
 """Independent arithmetic expectations and bounded expression language."""
 import unittest
-import test_reference_runtime
+from fixtures.native_runtime import reference_kit
 from support_agent.domain.money import calculate_expression
 from support_agent.domain.identity import ReadError
 
@@ -34,10 +34,8 @@ class ExpressionCalculatorTests(unittest.TestCase):
             with self.subTest(precision=precision),self.assertRaises(ReadError):
                 calculate_expression("1+2",precision)
 
-    def test_tool_keeps_legacy_history_without_mixing_two_interfaces(self):
-        kit,_,requests=test_reference_runtime.reference_kit()
+    def test_tool_uses_one_expression_interface_without_business_requests(self):
+        kit,_,requests=reference_kit()
         self.assertEqual(kit.calculate(expression="3*(7-2)")["result"],15)
-        self.assertEqual(kit.calculate("multiply",[3,5])["result"],15)
-        with self.assertRaisesRegex(ReadError,"choose_expression_or_legacy_operands"):
-            kit.calculate("add",[1,2],expression="1+2")
+        self.assertEqual(kit.calculate("3*5")["result"],15)
         self.assertEqual(requests,[])

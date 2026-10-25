@@ -8,24 +8,24 @@ Reuse observed facts. When verification already selects a named order and named
 products, batch those reads; do not also discover every order unnecessarily.
 Before criteria are known, ask for missing preferences rather than dump stock.
 
-Translate ALL hard constraints into one query or batch ranked alternatives.
+Consider all customer requirements together when selecting from actual catalogs.
 Numeric comparisons require explicit units; never guess size scales. Respect
-priorities and fallbacks. If a requested configuration requires changing another
-attribute, explain that change in the proposal. Explicit same-except constraints
-must stay fixed. Propose a unique best match instead of asking the customer to
-choose it again. Use actual IDs; IDs do not encode product relationships.
+priorities and fallbacks. Disclose other changed attributes in the recap. Explicit
+same-except constraints must stay fixed. Do not invent hard constraints from every
+original attribute the customer did not ask to retain. Propose a unique best match
+instead of asking the customer to select it again. Use actual product records.
 
-query_product_variants filters available choices. Invalid vocabulary is not no
-stock. No limit when all matches/prices were requested; limit only for a best/top
-request. variant_count includes unavailable choices, available_variant_count does
-not. Use an obvious observed match without another query.
+get_products returns options, prices and availability together. Distinguish an
+absent configuration from one that exists but is unavailable. List all matching
+options/prices when requested. variant_count includes unavailable choices;
+available_variant_count does not. An observed match needs no extra query.
 
 Use calculate with ONE complete parenthesized arithmetic expression, or reuse a
-quote's calculations. item_price_total covers all item occurrences, not refunds;
+previous verified calculation. Whole-order value covers all occurrences, not refunds;
 a selected subset needs its own sum even if its requested write is unsupported.
 Explain selected value separately from a permitted refund. Never substitute the
 whole order amount. A single recorded price or computed row difference is reusable.
-Quotes retain backend float(new-old) accumulation in request order, then round
+Replacement differences use float(new-old) accumulation in request order, then round
 once to 2 digits; do not substitute per-row rounding or Decimal HALF_UP.
 
 Sources: meeting_transcript_01.vtt; process_map_01.png;

@@ -15,8 +15,17 @@ executor permission is required. One recap may authorize several explicit writes
 do address/payment before item updates. Preserve duplicate item IDs as quantities.
 No hidden line ID can select a particular differently priced duplicate occurrence.
 
+For a multi-order request use get_all_todo_orders with the relevant operations
+and scope. Review eligible, ineligible, unfinished and already registered orders;
+eligibility is not customer intent. Resolve every requested target, including
+explicitly declined/skipped work, before saying the entire request is complete.
+
 Check receipts and report successful, failed and remaining work separately. Use
 inspect_operation for pending/unknown writes; never repeat their business request.
+Writes verify actual effects automatically. verify_operation can recover a lost
+response from real records or recheck a known result. If unverified, explain the
+uncertainty and retain it for inspection or handoff; do not invent success or a
+refund endpoint. A stable operation ID does not make unsafe POST retries safe.
 Do not append after a one-time submission or trim a rejected list to bypass limits.
 A return/exchange application is not refund arrival, shipment or email delivery.
 processed alone proves no shipping event. Allow follow-ups and corrections; ordinary

@@ -97,7 +97,7 @@ def active_skill_names(history):
             requested = arguments.get("names") if call["name"] == "load_skills" else arguments.get("skill_names")
             if not requested:
                 if call["name"] == "verify_customer" and value.get("customer_id"):
-                    active = tuple(skill_bundle(["service-workflow"])["names"])
+                    active = tuple(dict.fromkeys([*active,*skill_bundle(["service-workflow"])["names"]]))
                 continue  # Historical sessions get shared rules, not a policy-free path.
             actual = value.get("business_skills")
             if not isinstance(actual, dict) or not set(requested) <= set(actual.get("names", [])):
@@ -106,7 +106,7 @@ def active_skill_names(history):
             # or untrusted receipt prose must neither become instructions nor
             # erase an otherwise valid conversation.
             expected = skill_bundle(requested)
-            active = tuple(expected["names"])
+            active = tuple(dict.fromkeys([*active,*expected["names"]]))
     return active
 
 

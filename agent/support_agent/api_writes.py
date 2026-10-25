@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from support_agent.adapters.read_models import Record,Address,OrderCancellation,OrderPayment,OrderItem,OrderReturn,OrderExchange
 from support_agent.adapters.response_values import normalize_response,ResponseValueError
 from support_agent.adapters.workflow_api import accepted_workflow,poll_workflow
+from support_agent.business_service import multiset,payment_multiset
 
 class DefaultAddressResult(Record):
     customer_id:str
@@ -54,6 +55,14 @@ def validate_receipt(facts,body):
         if actual[key]!=facts[key]:
             raise ValueError("Wrong resource")
         requested=facts["body"]
+        expected=facts.get('expected')
+        if expected is not None:
+            if kind in {'cancel','payment','modify_items'} and payment_multiset(actual['payments'])!=payment_multiset(expected['payments']):
+                raise ValueError('Wrong settlement')
+            if kind=='modify_items' and multiset(actual['items'])!=multiset(expected['items']):
+                raise ValueError('Wrong modified items')
+            if kind=='exchange' and actual['exchange']['price_difference']!=expected['exchange']['price_difference']:
+                raise ValueError('Wrong difference')
         if kind in {"default_address","order_address"}:
             address=actual["default_shipping_address" if kind=="default_address" else "shipping_address"]
             for name in ("address_line_1","city","region","country","postal_code"):

@@ -28,5 +28,10 @@ whole order amount. A single recorded price or computed row difference is reusab
 Replacement differences use float(new-old) accumulation in request order, then round
 once to 2 digits; do not substitute per-row rounding or Decimal HALF_UP.
 
+Do not state a newly derived price difference before the calculator returns it,
+even if subtraction looks easy. Match ordinary semantic equivalents to catalog
+terms; clarify genuine unresolved requirements rather than adding conditions
+solely because the customer's wording differs from a catalog label.
+
 Sources: meeting_transcript_01.vtt; process_map_01.png;
 INTERFACE-CLARIFICATIONS.md U3-U6. Query batching is an engineering choice.

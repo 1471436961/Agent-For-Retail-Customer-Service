@@ -3,8 +3,8 @@ from collections import Counter
 from copy import deepcopy
 from urllib.parse import quote
 from typing import Literal
-from pydantic import Field,ValidationError
-from support_agent.adapters.read_models import Record,Address,ItemReplacement,NonEmpty,OrderCancellation,OrderPayment,OrderItem,OrderReturn,OrderExchange
+from pydantic import ValidationError
+from support_agent.adapters.read_models import Record,Address,OrderCancellation,OrderPayment,OrderItem,OrderReturn,OrderExchange
 from support_agent.adapters.response_values import normalize_response,ResponseValueError
 from support_agent.adapters.workflow_api import accepted_workflow,poll_workflow
 
@@ -45,17 +45,6 @@ OPERATIONS={
     "exchange":("POST","/v1/orders/{}/exchanges",ExchangeResult),
 }
 
-# These are existing OpenAPI body constraints, not new business restrictions.
-class PaymentRequest(Record):
-    payment_method_id:NonEmpty
-class ReplacementRequest(PaymentRequest):
-    replacements:list[ItemReplacement]=Field(min_length=1)
-class ReturnRequest(Record):
-    item_ids:list[NonEmpty]=Field(min_length=1)
-    refund_payment_method_id:NonEmpty
-REQUESTS={"default_address":Address,"order_address":Address,"cancel":OrderCancellation,
-    "payment":PaymentRequest,"modify_items":ReplacementRequest,"return":ReturnRequest,"exchange":ReplacementRequest}
-
 def validate_receipt(facts,body):
     kind=facts["kind"]
     try:
@@ -91,10 +80,6 @@ def validate_receipt(facts,body):
             **({"response_warnings":warnings} if warnings else {})}
 
 def write_once(api,facts):
-    try:
-        REQUESTS[facts["kind"]].model_validate(facts["body"])
-    except ValidationError:
-        return {"state":"failed","error":"invalid_write_parameters"}
     method,path,_=OPERATIONS[facts["kind"]]
     identifier=facts["customer_id"] if facts["kind"]=="default_address" else facts["order_id"]
     try:

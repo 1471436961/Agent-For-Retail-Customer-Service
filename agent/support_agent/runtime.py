@@ -7,13 +7,6 @@ from support_agent.adapters.conversation_api import TRANSFER_NOTICE
 from support_agent.prompts import BASE_PROMPT
 from support_agent.skills import active_skill_names,instructions_for,skill_index
 from support_agent.tools_impl import ACTIONS
-from support_agent.domain.identity import ReadError,identity_selector
-
-# The sandbox shim erases the upstream exception class. Recognize only the
-# standard JSON decoder messages; never swallow service/quota/transport errors.
-JSON_DECODER_MESSAGES=("Expecting value:","Expecting property name enclosed in double quotes:",
-    "Expecting ',' delimiter:","Expecting ':' delimiter:","Unterminated string starting at:",
-    "Extra data:","Invalid \\escape:","Invalid control character at:")
 
 
 def message_object(value):
@@ -80,43 +73,27 @@ class RetailAgent:
                   *map(message_object,history)]
         for attempt in range(2):
             try:
-                try:
-                    reply=self.gateway.generate(model=self.model,actions=self.actions,messages=messages,
-                        call_name="retail_response",**self.options)
-                except RuntimeError as error:
-                    if not str(error).startswith(JSON_DECODER_MESSAGES):
-                        raise  # Preserve the host's infrastructure classification.
-                    if attempt==0:
-                        messages.append(SystemMessage(role="system",content=
-                            "The previous model reply could not be decoded; no tool was executed. Return a shorter complete text reply or native tool call using the displayed schema and existing approvals."))
-                        continue
-                    return self._finish(history,AssistantMessage(role="assistant",content=
-                        "I encountered a technical problem decoding the next response. No new tool call was executed; previous recorded results are unchanged."),
-                        {"stage":"model_generation","exception_type":type(error).__name__})
+                reply=self.gateway.generate(model=self.model,actions=self.actions,messages=messages,
+                    call_name="retail_response",**self.options)
                 if not isinstance(reply,AssistantMessage) or (not reply.content and not reply.tool_calls):
                     raise ValueError("Empty assistant reply")
                 for call in reply.tool_calls or []:
                     if call.name not in self.by_name:
                         raise ValueError("Unknown tool")
                     self.by_name[call.name].params.model_validate(call.arguments)
-                    if call.name=="verify_customer":
-                        identity_selector(**{key:call.arguments.get(key,"") for key in
-                            ("email","first_name","last_name","postal_code")})
                 # Provider debug objects are not dialogue or serialized state.
                 return self._finish(history,reply.model_copy(update={"raw_data":None}))
-            except (ValueError,ValidationError,json.JSONDecodeError) as error:
+            except (ValueError,ValidationError,json.JSONDecodeError):
                 if attempt:
                     return self._finish(history,AssistantMessage(role="assistant",content=
                         "I encountered a technical problem generating the next reply. No proposed tool call was executed."))
-                detail=(" Verification needs email alone OR first_name, last_name and postal_code together. An account ID is not a first/last name; ask for missing identity fields without guessing."
-                    if isinstance(error,ReadError) and error.code=="incomplete_identity_selector" else "")
                 messages.append(SystemMessage(role="system",content=
-                    "The draft was not executed. Return concise text or valid native tool arguments using the displayed schema. Keep the customer's actual request and approvals."+detail))
+                    "The draft was not executed. Return concise text or valid native tool arguments using the displayed schema. Keep the customer's actual request and approvals."))
 
     @staticmethod
-    def _finish(history,reply,diagnostic=None):
+    def _finish(history,reply):
         history.append(reply.model_dump(mode="json",exclude={"raw_data"}))
-        return reply,{"messages":history,**({"diagnostic":diagnostic} if diagnostic else {})}
+        return reply,{"messages":history}
 
     @staticmethod
     def is_stop(message):

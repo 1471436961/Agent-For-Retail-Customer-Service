@@ -1,12 +1,11 @@
 """Small stable customer tools; no dialogue phase or proposal state machine."""
 from copy import deepcopy
 from threading import RLock
-from typing import Annotated,Literal
-from pydantic import Field
+from typing import Literal
 from tau2.environment.toolkit import ToolType,is_tool
 from tau2.hyper.client_api import ClientAPIToolKitBase
 from support_agent.adapters.read_api import read_customer,read_order,read_product,read_products,search_customer
-from support_agent.adapters.read_models import Address,ItemReplacement,NonEmpty
+from support_agent.adapters.read_models import Address,ItemReplacement
 from support_agent.adapters.conversation_api import transfer_once
 from support_agent.api_writes import write_once,resume_workflow
 from support_agent.domain.identity import identity_selector,resource_id,ReadError,verification_failed
@@ -16,8 +15,6 @@ from support_agent.skills import SkillName,skill_bundle
 ACTIONS=("verify_customer","get_customer","get_orders","get_products","load_skills","calculate",
     "update_default_address","update_order_address","cancel_order","change_order_payment",
     "modify_order_items","request_return","request_exchange","inspect_operation","transfer_to_human")
-Replacements=Annotated[list[ItemReplacement],Field(min_length=1)]
-ItemIDs=Annotated[list[NonEmpty],Field(min_length=1)]
 
 
 class RetailTools(ClientAPIToolKitBase):
@@ -67,8 +64,7 @@ class RetailTools(ClientAPIToolKitBase):
                         product_names:list[str]|None=None,skill_names:list[SkillName]|None=None)->dict:
         """Verify email OR full name+postal code. An optional claimed ID must match.
 
-        For one known order use order_id and leave include_orders false.
-        Use include_orders only for discovery or explicit multi-order requests. Selected
+        Include a known order_id, or include_orders for discovery. Selected
         product_names and skill_names can be read in this same action.
         """
         with self._lock:
@@ -175,23 +171,23 @@ class RetailTools(ClientAPIToolKitBase):
         return self._write("cancel",{"reason":reason},order_id)
 
     @is_tool(ToolType.WRITE)
-    def change_order_payment(self,order_id:str,payment_method_id:NonEmpty)->dict:
+    def change_order_payment(self,order_id:str,payment_method_id:str)->dict:
         """Replace the approved pending order's full payment with one saved method."""
         return self._write("payment",{"payment_method_id":payment_method_id},order_id)
 
     @is_tool(ToolType.WRITE)
-    def modify_order_items(self,order_id:str,replacements:Replacements,payment_method_id:NonEmpty)->dict:
+    def modify_order_items(self,order_id:str,replacements:list[ItemReplacement],payment_method_id:str)->dict:
         """Submit the complete approved pending-order variant changes once."""
         rows=[ItemReplacement.model_validate(r).model_dump() for r in replacements]
         return self._write("modify_items",{"replacements":rows,"payment_method_id":payment_method_id},order_id)
 
     @is_tool(ToolType.WRITE)
-    def request_return(self,order_id:str,item_ids:ItemIDs,refund_payment_method_id:NonEmpty)->dict:
+    def request_return(self,order_id:str,item_ids:list[str],refund_payment_method_id:str)->dict:
         """Register the complete approved delivered return list and eligible refund method."""
         return self._write("return",{"item_ids":item_ids,"refund_payment_method_id":refund_payment_method_id},order_id)
 
     @is_tool(ToolType.WRITE)
-    def request_exchange(self,order_id:str,replacements:Replacements,payment_method_id:NonEmpty)->dict:
+    def request_exchange(self,order_id:str,replacements:list[ItemReplacement],payment_method_id:str)->dict:
         """Register complete approved same-product variant exchanges and saved settlement method."""
         rows=[ItemReplacement.model_validate(r).model_dump() for r in replacements]
         return self._write("exchange",{"replacements":rows,"payment_method_id":payment_method_id},order_id)

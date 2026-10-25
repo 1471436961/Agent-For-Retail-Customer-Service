@@ -5,7 +5,6 @@ Source: reviewed OpenAPI, INTERFACE-CLARIFICATIONS U5/U6 and packaged policies.
 """
 from collections import Counter
 from copy import deepcopy
-import json
 from support_agent.domain.identity import ReadError
 
 
@@ -20,7 +19,11 @@ def payment_row(kind,amount,method):
 
 
 def multiset(rows):
-    return Counter(json.dumps(r,sort_keys=True,separators=(',',':')) for r in rows)
+    def freeze(value):
+        if isinstance(value,dict):return tuple(sorted((key,freeze(item)) for key,item in value.items()))
+        if isinstance(value,list):return tuple(freeze(item) for item in value)
+        return value
+    return Counter(freeze(row) for row in rows)
 
 
 def payment_multiset(rows):
@@ -100,26 +103,44 @@ def address_equal(actual,expected):
                ('address_line_1','address_line_2','city','region','country','postal_code'))
 
 
-def check_effect(kind,expected,actual,profile=None):
-    """Full operation-specific postconditions, not an HTTP success check."""
-    if kind=='default_address':return address_equal(actual['default_shipping_address'],expected['address'])
+def with_receipt_details(kind,actual,receipt=None):
+    """Optional GET detail fields may be supplied by an already validated receipt.
+
+    Never overwrite a conflicting present field or synthesize missing evidence.
+    The observed status/items/payments still have to match actual current reads.
+    """
+    key={'cancel':'cancellation','return':'return_request','exchange':'exchange'}.get(kind)
+    if key and actual.get(key) is None and receipt and receipt.get(key) is not None:
+        return {**actual,key:deepcopy(receipt[key])}
+    return actual
+
+
+def effect_mismatches(kind,expected,actual,profile=None,receipt=None):
+    """Report field-level mismatches without leaking record values."""
+    actual=with_receipt_details(kind,actual,receipt)
+    if kind=='default_address':return [] if address_equal(actual['default_shipping_address'],expected['address']) else ['default_shipping_address']
+    mismatches=[]
     if profile is not None and any(next((m.get('balance') for m in profile['payment_methods'] if m['id']==key),None)!=value
-                                   for key,value in expected['gift_balances'].items()):return False
-    if actual.get('status')!=expected['status']:return False
-    if not address_equal(actual.get('shipping_address',{}),expected['shipping_address']):return False
-    if multiset(actual.get('items',[]))!=multiset(expected['items']):return False
-    if payment_multiset(actual.get('payments',[]))!=payment_multiset(expected['payments']):return False
-    if kind=='cancel':return actual.get('cancellation')==expected['cancellation']
+                                   for key,value in expected['gift_balances'].items()):mismatches.append('gift_balance')
+    if actual.get('status')!=expected['status']:mismatches.append('status')
+    if not address_equal(actual.get('shipping_address',{}),expected['shipping_address']):mismatches.append('shipping_address')
+    if multiset(actual.get('items',[]))!=multiset(expected['items']):mismatches.append('items')
+    if payment_multiset(actual.get('payments',[]))!=payment_multiset(expected['payments']):mismatches.append('payments')
+    if kind=='cancel' and actual.get('cancellation')!=expected['cancellation']:mismatches.append('cancellation')
     if kind=='return':
         actual_return=actual.get('return_request') or {};wanted=expected['return_request']
-        return (Counter(actual_return.get('item_ids',[]))==Counter(wanted['item_ids']) and
-                actual_return.get('refund_payment_method_id')==wanted['refund_payment_method_id'])
+        if (Counter(actual_return.get('item_ids',[]))!=Counter(wanted['item_ids']) or
+                actual_return.get('refund_payment_method_id')!=wanted['refund_payment_method_id']):mismatches.append('return_request')
     if kind=='exchange':
         exchange=actual.get('exchange') or {};wanted=expected['exchange']
         # Upstream independently sorts the two receipt columns. Preserve request
         # pairs in our facts and compare occurrence counts in the public record.
-        return (exchange.get('payment_method_id')==wanted['payment_method_id'] and
+        if not (exchange.get('payment_method_id')==wanted['payment_method_id'] and
                 exchange.get('price_difference')==wanted['price_difference'] and
                 all(Counter(r[k] for r in exchange.get('replacements',[]))==Counter(r[k] for r in wanted['replacements'])
-                    for k in ('existing_item_id','replacement_item_id')))
-    return True
+                    for k in ('existing_item_id','replacement_item_id'))):mismatches.append('exchange')
+    return mismatches
+
+
+def check_effect(kind,expected,actual,profile=None,receipt=None):
+    return not effect_mismatches(kind,expected,actual,profile,receipt)

@@ -20,6 +20,8 @@ numeric units and ordered preference values from the customer's request. It
 returns every available match, ranked by those priorities and then price. Use
 search_products for a complete product-name search. Both tools are read-only;
 ranking is evidence for a proposal, never permission to submit it.
+Ranking reuses observed catalogs; get_products refreshes them. Writes independently
+recheck actual stock and prices before submission.
 
 get_products returns options, prices and availability together. Distinguish an
 absent configuration from one that exists but is unavailable. List all matching

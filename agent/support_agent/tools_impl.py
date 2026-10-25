@@ -3,6 +3,7 @@ from copy import deepcopy
 from hashlib import sha256
 import json
 from threading import RLock
+from time import sleep
 from typing import Literal
 from tau2.environment.toolkit import ToolType,is_tool
 from tau2.hyper.client_api import ClientAPIToolKitBase
@@ -10,7 +11,7 @@ from support_agent.adapters.read_api import read_customer,read_order,read_produc
 from support_agent.adapters.read_models import Address,ItemReplacement
 from support_agent.adapters.conversation_api import transfer_once
 from support_agent.api_writes import OPERATIONS,validate_receipt,write_once,resume_workflow
-from support_agent.business_service import check_effect,eligible_operations,expected_effect
+from support_agent.business_service import check_effect,effect_mismatches,eligible_operations,expected_effect,with_receipt_details
 from support_agent.catalog import option_values,rank_variants,search_index
 from support_agent.domain.identity import identity_selector,resource_id,ReadError,verification_failed
 from support_agent.domain.money import calculate_expression
@@ -19,6 +20,7 @@ from support_agent.skills import SkillName,skill_bundle
 ACTIONS=("verify_customer","get_customer","get_orders","get_all_todo_orders","get_products","search_products","rank_preferred","load_skills","calculate",
     "update_default_address","update_order_address","cancel_order","change_order_payment",
     "modify_order_items","request_return","request_exchange","inspect_operation","verify_operation","transfer_to_human")
+VERIFY_DELAYS=(0,0.25,0.5,1,2,4,4,4,4)  # At most 19.75 seconds of safe read waits.
 
 
 class RetailTools(ClientAPIToolKitBase):
@@ -28,6 +30,7 @@ class RetailTools(ClientAPIToolKitBase):
         self._conversation=None
         self._pending={}
         self._operations={}
+        self._catalogs={}
         self._handoff=None
         self._lock=RLock()
 
@@ -40,15 +43,19 @@ class RetailTools(ClientAPIToolKitBase):
             self._verified=None
             self._pending={}
             self._operations={}
+            self._catalogs={}
             self._handoff=None
             self._conversation=conversation
         if self._handoff in {"accepted","unknown"}:
             raise ReadError("automated_service_stopped_after_handoff")
 
-    def _customer(self):
+    def _require_identity(self):
         self._active()
         if self._verified is None:
             raise ReadError("identity_required")
+
+    def _customer(self):
+        self._require_identity()
         return read_customer(self.client_api,self._verified)
 
     def _order(self,identifier,profile):
@@ -147,6 +154,7 @@ class RetailTools(ClientAPIToolKitBase):
         for product in products:
             product["variant_count"]=len(product["items"])
             product["available_variant_count"]=sum(i["available"] for i in product["items"])
+            self._catalogs[product['product_id']]=deepcopy(product)
         return products
 
     @is_tool(ToolType.READ)
@@ -157,7 +165,7 @@ class RetailTools(ClientAPIToolKitBase):
         candidates from these actual records; no separate filtering tool is needed.
         """
         with self._lock:
-            self._customer()
+            self._require_identity()
             if not product_ids and not product_names:
                 return read_products(self.client_api)
             return {"products":self._products(list(product_ids or []),product_names or [])}
@@ -169,7 +177,7 @@ class RetailTools(ClientAPIToolKitBase):
         The REST catalog is unpaginated. No first-page or top-k truncation.
         """
         with self._lock:
-            self._customer()
+            self._require_identity()
             return search_index(read_products(self.client_api)['products'],name_contains)
 
     @is_tool(ToolType.READ)
@@ -184,12 +192,14 @@ class RetailTools(ClientAPIToolKitBase):
         Returns every match and counts, never writes or chooses for the customer.
         """
         with self._lock:
-            self._customer()
-            product=read_product(self.client_api,product_id)
+            self._require_identity()
+            source='observed_catalog' if product_id in self._catalogs else 'fresh_read'
+            product=deepcopy(self._catalogs[product_id]) if product_id in self._catalogs else read_product(self.client_api,product_id)
+            self._catalogs[product_id]=deepcopy(product)
             try:
-                return rank_variants(product,filters,numeric_filters,preferences,descending_price)
+                return {**rank_variants(product,filters,numeric_filters,preferences,descending_price),'source':source}
             except ReadError as error:
-                return {'state':'invalid_criteria','error':error.code,'option_values':option_values(product),'complete':False}
+                return {'state':'invalid_criteria','error':error.code,'option_values':option_values(product),'complete':False,'source':source}
 
     @is_tool(ToolType.GENERIC)
     def calculate(self,expression:str,decimal_places:int|None=None)->dict:
@@ -208,7 +218,7 @@ class RetailTools(ClientAPIToolKitBase):
             for retained in reversed(list(self._operations.values())):
                 facts=retained['facts']
                 if facts['kind']==kind and facts['order_id']==order_id and facts['body']==body:
-                    if retained['outcome']['state'] in {'accepted','completed'} and check_effect(kind,facts['expected'],order or profile,profile):
+                    if retained['outcome']['state'] in {'accepted','completed'} and check_effect(kind,facts['expected'],order or profile,profile,retained.get('receipt')):
                         return deepcopy(retained['outcome'])
                     break
             try:
@@ -216,11 +226,14 @@ class RetailTools(ClientAPIToolKitBase):
             except ReadError as error:
                 return {'state':'failed','error':error.code}
             facts={"kind":kind,"body":deepcopy(body),"customer_id":self._verified,"order_id":order_id,'expected':expected}
-            identity={'conversation':self._conversation,'sequence':len(self._operations),'facts':facts}
+            # Host replay rebuilds the same business trajectory in a fresh
+            # conversation. A transport conversation ID is not business identity.
+            identity={'sequence':len(self._operations),'facts':facts}
             operation_id=sha256(json.dumps(identity,sort_keys=True,separators=(',',':')).encode()).hexdigest()[:24]
             outcome=write_once(self.client_api,facts)
             outcome['operation_id']=operation_id
             retained={'facts':facts,'outcome':deepcopy(outcome)}
+            if outcome['state'] in {'accepted','completed'}:retained['receipt']=deepcopy(outcome['receipt'])
             self._operations[operation_id]=retained
             if outcome['state'] in {'accepted','completed','unknown'}:
                 outcome=self._verify(retained)
@@ -230,19 +243,32 @@ class RetailTools(ClientAPIToolKitBase):
 
     def _verify(self,retained):
         facts=retained['facts'];previous=retained['outcome']
-        try:
-            profile=self._customer()
-            actual=self._order(facts['order_id'],profile) if facts['order_id'] is not None else profile
-            if not check_effect(facts['kind'],facts['expected'],actual,profile):raise ReadError('postcondition_mismatch')
-            model=OPERATIONS[facts['kind']][2]
-            receipt={key:actual[key] for key in model.model_fields}
-            result=validate_receipt(facts,receipt)
-            if result['state']=='unknown':raise ReadError('invalid_verified_receipt')
-            outcome={**result,'operation_id':previous['operation_id'],'verified':True}
-        except (ReadError,KeyError):
-            outcome={**{k:previous[k] for k in ('operation_id','workflow') if k in previous},
-                'state':'unknown','error':'postcondition_not_verified','verified':False,'retry_safe':False,
-                'next_action':'Inspect again or transfer for unresolved effects; no automatic business retry or separate refund endpoint.'}
+        mismatches=[]
+        for delay in VERIFY_DELAYS:
+            if delay:sleep(delay)
+            try:
+                self._active()
+                if self._verified!=facts['customer_id']:raise ReadError('identity_required')
+                profile=self._customer() if facts['order_id'] is None or facts['expected'].get('gift_balances') else None
+                actual=read_order(self.client_api,facts['order_id']) if facts['order_id'] is not None else profile
+                if facts['order_id'] is not None and actual['customer_id']!=self._verified:raise ReadError('order_access_denied')
+                mismatches=effect_mismatches(facts['kind'],facts['expected'],actual,profile,retained.get('receipt'))
+                if mismatches:continue  # A read projection may lag the authoritative write.
+                observed=with_receipt_details(facts['kind'],actual,retained.get('receipt'))
+                receipt={key:observed[key] for key in OPERATIONS[facts['kind']][2].model_fields}
+                result=validate_receipt(facts,receipt)
+                if result['state']=='unknown':raise ReadError('invalid_verified_receipt')
+                outcome={**result,'operation_id':previous['operation_id'],'verified':True}
+                retained['outcome']=deepcopy(outcome)
+                return outcome
+            except (ReadError,KeyError) as error:
+                mismatches=[error.code if isinstance(error,ReadError) else 'missing_receipt_field']
+                break  # Read-layer failures already retain their own bounded policy.
+        outcome={**{k:previous[k] for k in ('operation_id','workflow') if k in previous},
+            'state':'unknown','error':'postcondition_not_verified','verification_checks':mismatches,
+            'submission_state':('accepted' if facts['kind'] in {'return','exchange'} else 'completed') if retained.get('receipt') else 'unknown',
+            'verified':False,'retry_safe':False,
+            'next_action':'Inspect again or transfer for unresolved effects; no automatic business retry or separate refund endpoint.'}
         retained['outcome']=deepcopy(outcome)
         return outcome
 
@@ -295,7 +321,7 @@ class RetailTools(ClientAPIToolKitBase):
         Omit order_id for the profile default address operation.
         """
         with self._lock:
-            self._customer()
+            self._require_identity()
             target=order_id or self._verified
             retained=self._pending.get(target)
             if retained is None:
@@ -308,6 +334,7 @@ class RetailTools(ClientAPIToolKitBase):
             outcome=resume_workflow(self.client_api,retained["facts"],previous["workflow"])
             outcome['operation_id']=previous['operation_id']
             retained["outcome"]=deepcopy(outcome)
+            if outcome['state'] in {'accepted','completed'}:retained['receipt']=deepcopy(outcome['receipt'])
             if outcome['state'] in {'accepted','completed'}:outcome=self._verify(retained)
             if outcome["state"] in {"accepted","completed","failed"}:
                 del self._pending[target]
@@ -321,7 +348,7 @@ class RetailTools(ClientAPIToolKitBase):
         this target. Never repeats a business write or creates a refund endpoint.
         """
         with self._lock:
-            self._customer();target=order_id or self._verified
+            self._require_identity();target=order_id or self._verified
             if target in self._pending:return self.inspect_operation(order_id)
             retained=next((r for r in reversed(list(self._operations.values()))
                            if (r['facts']['order_id'] or r['facts']['customer_id'])==target),None)

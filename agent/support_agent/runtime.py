@@ -7,6 +7,12 @@ from support_agent.adapters.conversation_api import TRANSFER_NOTICE
 from support_agent.prompts import BASE_PROMPT
 from support_agent.skills import active_skill_names,instructions_for,skill_index
 from support_agent.tools_impl import ACTIONS
+from support_agent.domain.identity import identity_selector,ReadError
+
+# The sandbox preserves the JSON decoder message but erases its exception type.
+JSON_FORMAT_ERRORS=('Expecting value:','Expecting property name enclosed in double quotes:',
+    "Expecting ',' delimiter:","Expecting ':' delimiter:",'Unterminated string starting at:',
+    'Extra data:','Invalid \\escape:','Invalid control character at:')
 
 
 def message_object(value):
@@ -77,18 +83,29 @@ class RetailAgent:
                     call_name="retail_response",**self.options)
                 if not isinstance(reply,AssistantMessage) or (not reply.content and not reply.tool_calls):
                     raise ValueError("Empty assistant reply")
+                raw=reply.raw_data or {};choices=raw.get('choices') or []
+                if ((choices and isinstance(choices[0],dict) and choices[0].get('finish_reason')=='length') or
+                        raw.get('status')=='incomplete'):
+                    raise ValueError('provider_output_truncated')
                 for call in reply.tool_calls or []:
                     if call.name not in self.by_name:
                         raise ValueError("Unknown tool")
                     self.by_name[call.name].params.model_validate(call.arguments)
+                    if call.name=='verify_customer':
+                        identity_selector(**{key:call.arguments.get(key,'') for key in ('email','first_name','last_name','postal_code')})
                 # Provider debug objects are not dialogue or serialized state.
                 return self._finish(history,reply.model_copy(update={"raw_data":None}))
-            except (ValueError,ValidationError,json.JSONDecodeError):
+            except (ValueError,ValidationError,json.JSONDecodeError,RuntimeError) as error:
+                if isinstance(error,RuntimeError) and not str(error).startswith(JSON_FORMAT_ERRORS):raise
                 if attempt:
                     return self._finish(history,AssistantMessage(role="assistant",content=
                         "I encountered a technical problem generating the next reply. No proposed tool call was executed."))
+                detail=(' Verification needs email alone OR first_name, last_name and postal_code together. Ask for missing fields; an account ID is not a name or an authentication alternative.'
+                        if isinstance(error,ReadError) and error.code=='incomplete_identity_selector' else '')
+                if str(error)=='provider_output_truncated':
+                    detail=' The provider reported truncation. Return a much shorter complete reply with all essential facts; no partial recap or draft tool call was executed.'
                 messages.append(SystemMessage(role="system",content=
-                    "The draft was not executed. Return concise text or valid native tool arguments using the displayed schema. Keep the customer's actual request and approvals."))
+                    "The draft was not executed. Return concise text or valid native tool arguments using the displayed schema. Keep the customer's actual request and approvals."+detail))
 
     @staticmethod
     def _finish(history,reply):

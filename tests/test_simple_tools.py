@@ -24,6 +24,9 @@ class Clock:
     def sleep(self,seconds):self.now+=seconds;self.delays.append(seconds)
 
 class SimpleToolsTests(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch('support_agent.tools_impl.sleep',return_value=None))
+
     def test_all_seven_writes_match_native_database_and_replay(self):
         for kind,name in WRITE_TOOLS.items():
             with self.subTest(kind=kind):

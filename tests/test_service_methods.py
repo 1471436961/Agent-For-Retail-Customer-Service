@@ -84,8 +84,32 @@ class SelectionMethods(unittest.TestCase):
             history.extend([AssistantMessage(role='assistant',tool_calls=[call]).model_dump(mode='json'),result.model_dump(mode='json')])
         self.assertTrue({'delivered-exchanges','delivered-service','order-cancellation'}<=set(active_skill_names(history)))
 
+    def test_ranking_reuses_observed_catalog_but_write_rechecks_real_stock(self):
+        kit,rt,requests=reference_kit();case=SEED['cases'][1]
+        kit.verify_customer(email=case['email']);args=parameters('exchange',case,rt)
+        old=next(i for i in rt.environment.tools.db.orders[case['order_id']].items if i.item_id==args['replacements'][0]['existing_item_id'])
+        kit.get_products([old.product_id]);before=len(requests)
+        ranked=kit.rank_preferred(old.product_id)
+        self.assertEqual(ranked['source'],'observed_catalog');self.assertEqual(len(requests),before)
+        rt.environment.tools.db.products[old.product_id].variants[args['replacements'][0]['replacement_item_id']].available=False
+        result=kit.request_exchange(**args)
+        self.assertEqual(result['error'],'replacement_unavailable')
+        self.assertFalse(business_writes(requests))
+
+    def test_public_catalog_reuse_never_survives_a_conversation_identity_boundary(self):
+        kit,rt,requests=reference_kit();case=SEED['cases'][0]
+        kit.verify_customer(email=case['email']);pid=next(iter(rt.environment.tools.db.products))
+        kit.rank_preferred(pid);self.assertTrue(kit._catalogs)
+        kit.client_api._set_context({'conversation_id':'new-catalog-session'})
+        before=len(requests)
+        with self.assertRaises(ReadError):kit.rank_preferred(pid)
+        self.assertFalse(kit._catalogs);self.assertEqual(len(requests),before)
+
 
 class ServiceMethods(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch('support_agent.tools_impl.sleep',return_value=None))
+
     def test_complete_todo_list_retains_ineligible_orders_and_remaining_work(self):
         kit,rt,requests=reference_kit();case=SEED['cases'][0];db=rt.environment.tools.db
         original=db.orders[case['order_id']]

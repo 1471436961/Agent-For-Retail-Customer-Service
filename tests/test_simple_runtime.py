@@ -57,6 +57,25 @@ class SimpleRuntimeTests(unittest.TestCase):
         self.assertEqual(self.model.call_count,2);self.assertEqual(self.requests,[])
         self.assertEqual(len(state["messages"]),2)
 
+    def test_incomplete_identity_selector_is_repaired_before_a_host_round(self):
+        self.model.side_effect=[AssistantMessage(role='assistant',tool_calls=[ToolCall(id='incomplete',name='verify_customer',
+            arguments={'first_name':'synthetic_account_42','postal_code':'12345'})]),
+            AssistantMessage(role='assistant',content='Please provide your full first and last name and your desired changes.')]
+        reply,state=self.agent.generate_next_message(UserMessage(role='user',content='My account ID is synthetic_account_42; postal code12345.'),self.agent.get_init_state())
+        self.assertFalse(reply.tool_calls);self.assertEqual(self.model.call_count,2)
+        self.assertEqual(self.requests,[])
+        self.assertIn('first_name, last_name and postal_code together',self.model.call_args.kwargs['messages'][-1].content)
+
+    def test_explicitly_truncated_provider_reply_never_becomes_a_partial_customer_recap(self):
+        self.model.side_effect=[AssistantMessage(role='assistant',content='The complete price difference is $',
+            raw_data={'choices':[{'finish_reason':'length'}]}),
+            AssistantMessage(role='assistant',content='Here is the complete proposal. Please review it before submission.')]
+        reply,state=self.agent.generate_next_message(UserMessage(role='user',content='Please explain the proposed change.'),self.agent.get_init_state())
+        self.assertEqual(self.model.call_count,2)
+        self.assertNotIn('price difference is $',reply.content)
+        self.assertFalse(any(row.get('content')=='The complete price difference is $' for row in state['messages']))
+        self.assertEqual(self.requests,[])
+
     def test_direct_write_does_not_require_local_proposal_or_approval_clock(self):
         case=SEED["cases"][0];args=parameters("order_address",case,self.runtime)
         self.kit.verify_customer(email=case["email"])
